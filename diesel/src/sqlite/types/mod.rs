@@ -2,6 +2,8 @@ mod date_and_time;
 #[cfg(all(feature = "sqlite", feature = "serde_json"))]
 mod json;
 mod numeric;
+#[cfg(all(feature = "sqlite", feature = "uuid"))]
+mod uuid;
 
 use super::connection::SqliteValue;
 use super::Sqlite;
