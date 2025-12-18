@@ -3,6 +3,8 @@ mod enum_;
 #[cfg(all(feature = "__sqlite-shared", feature = "serde_json"))]
 mod json;
 mod numeric;
+#[cfg(all(feature = "sqlite", feature = "uuid"))]
+mod uuid;
 
 use super::Sqlite;
 use super::connection::SqliteValue;
