@@ -21,6 +21,12 @@ mod foreign_impls {
     #[diesel(sql_type = Bool)]
     struct BoolProxy(bool);
 
+    #[cfg(feature = "gpui")]
+    #[derive(AsExpression, FromSqlRow)]
+    #[diesel(foreign_derive)]
+    #[diesel(sql_type = Text)]
+    struct SharedStringProxy(gpui::SharedString);
+
     #[derive(FromSqlRow)]
     #[cfg_attr(feature = "mysql_backend", derive(AsExpression))]
     #[diesel(foreign_derive)]
@@ -152,6 +158,30 @@ where
 }
 
 impl<DB> ToSql<sql_types::Text, DB> for String
+where
+    DB: Backend,
+    str: ToSql<sql_types::Text, DB>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
+        (self as &str).to_sql(out)
+    }
+}
+
+#[cfg(feature = "gpui")]
+#[diagnostic::do_not_recommend]
+impl<ST, DB> FromSql<ST, DB> for gpui::SharedString
+where
+    DB: Backend,
+    String: FromSql<ST, DB>,
+{
+    fn from_sql(bytes: DB::RawValue<'_>) -> deserialize::Result<Self> {
+        let string = <String as FromSql<ST, DB>>::from_sql(bytes)?;
+        Ok(string.into())
+    }
+}
+
+#[cfg(feature = "gpui")]
+impl<DB> ToSql<sql_types::Text, DB> for gpui::SharedString
 where
     DB: Backend,
     str: ToSql<sql_types::Text, DB>,
