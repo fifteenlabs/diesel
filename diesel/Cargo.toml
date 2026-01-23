@@ -34,6 +34,7 @@ serde_json = { version = ">=0.8.0, <2.0", optional = true, default-features = fa
 url = { version = "2.1.0", optional = true }
 percent-encoding = { version = "2.1.0", optional = true }
 uuid = { version = ">=0.7.0, <2.0.0", optional = true }
+gpui = { version = "0.2", optional = true }
 ipnetwork = { version = ">=0.12.2, <0.22.0", optional = true }
 ipnet = { version = "2.5.0", optional = true }
 num-bigint = { version = ">=0.2.0, <0.5.0", optional = true }
@@ -111,6 +112,7 @@ uuid = ["dep:uuid"]
 serde_json = ["dep:serde_json"]
 __sqlite-shared = ["dep:libsqlite3-sys", "dep:sqlite-wasm-rs", "diesel_derives/sqlite", "time?/formatting", "time?/parsing", "dep:bitflags"]
 __mysql_like_shared = ["dep:mysqlclient-sys", "dep:url", "dep:percent-encoding", "dep:bitflags"]
+gpui = ["dep:gpui"]
 __with_asan_tests = [
     "libsqlite3-sys?/bundled",
     "libsqlite3-sys?/with-asan",
