@@ -7,6 +7,9 @@ pub trait IntoConflictValueClause {
     fn into_value_clause(self) -> Self::ValueClause;
 }
 
+/// Wrapper around a SELECT used as the value source of an UPSERT, handling
+/// any backend-specific adjustments (e.g. SQLite's `WHERE 1=1` requirement
+/// when the inner select has no WHERE clause).
 #[derive(Debug, Clone, Copy)]
 pub struct OnConflictSelectWrapper<S>(pub(crate) S);
 

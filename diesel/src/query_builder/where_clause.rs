@@ -154,9 +154,12 @@ impl<Expr> ValidWhereClause<NoFromClause> for WhereClause<Expr> where
 {
 }
 
+/// Type-erased WHERE clause used by boxed query builders.
 #[allow(missing_debug_implementations)] // We can't...
 pub enum BoxedWhereClause<'a, DB> {
+    /// A non-empty boxed WHERE predicate.
     Where(Box<dyn QueryFragment<DB> + Send + 'a>),
+    /// No WHERE clause is attached.
     None,
 }
 
