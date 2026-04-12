@@ -9,9 +9,10 @@ pub trait IntoConflictValueClause {
 
 /// Wrapper around a SELECT used as the value source of an UPSERT, handling
 /// any backend-specific adjustments (e.g. SQLite's `WHERE 1=1` requirement
-/// when the inner select has no WHERE clause).
+/// when the inner select has no WHERE clause). The inner SELECT is exposed
+/// so out-of-tree backends can reimplement the SQLite-style specialization.
 #[derive(Debug, Clone, Copy)]
-pub struct OnConflictSelectWrapper<S>(pub(crate) S);
+pub struct OnConflictSelectWrapper<S>(pub S);
 
 impl<Q> Query for OnConflictSelectWrapper<Q>
 where
