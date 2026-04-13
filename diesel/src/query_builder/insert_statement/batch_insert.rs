@@ -49,9 +49,7 @@ impl<T, Table, QId, DB, const HAS_STATIC_QUERY_ID: bool> CanInsertInSingleQuery<
 where
     T: CanInsertInSingleQuery<DB>,
     DB: Backend,
-    DB: SqlDialect<
-        InsertWithDefaultKeyword = sql_dialect::default_keyword_for_insert::IsoSqlDefaultKeyword,
-    >,
+    DB::BatchInsertSupport: sql_dialect::batch_insert_support::BatchInsertViaValuesList,
 {
     fn rows_to_insert(&self) -> Option<usize> {
         self.values.rows_to_insert()
@@ -60,7 +58,8 @@ where
 
 impl<T, DB, const N: usize> CanInsertInSingleQuery<DB> for [T; N]
 where
-DB: Backend+ SqlDialect<InsertWithDefaultKeyword = sql_dialect::default_keyword_for_insert::IsoSqlDefaultKeyword>
+    DB: Backend,
+    DB::BatchInsertSupport: sql_dialect::batch_insert_support::BatchInsertViaValuesList,
 {
     fn rows_to_insert(&self) -> Option<usize> {
         Some(N)
@@ -69,7 +68,8 @@ DB: Backend+ SqlDialect<InsertWithDefaultKeyword = sql_dialect::default_keyword_
 
 impl<T, DB, const N: usize> CanInsertInSingleQuery<DB> for Box<[T; N]>
 where
-    DB: Backend+ SqlDialect<InsertWithDefaultKeyword = sql_dialect::default_keyword_for_insert::IsoSqlDefaultKeyword>
+    DB: Backend,
+    DB::BatchInsertSupport: sql_dialect::batch_insert_support::BatchInsertViaValuesList,
 {
     fn rows_to_insert(&self) -> Option<usize> {
         Some(N)
@@ -78,7 +78,8 @@ where
 
 impl<T, DB, const N: usize> CanInsertInSingleQuery<DB> for alloc::rc::Rc<[T; N]>
 where
-    DB: Backend+ SqlDialect<InsertWithDefaultKeyword = sql_dialect::default_keyword_for_insert::IsoSqlDefaultKeyword>
+    DB: Backend,
+    DB::BatchInsertSupport: sql_dialect::batch_insert_support::BatchInsertViaValuesList,
 {
     fn rows_to_insert(&self) -> Option<usize> {
         Some(N)
@@ -87,7 +88,8 @@ where
 
 impl<T, DB, const N: usize> CanInsertInSingleQuery<DB> for alloc::sync::Arc<[T; N]>
 where
-    DB: Backend+ SqlDialect<InsertWithDefaultKeyword = sql_dialect::default_keyword_for_insert::IsoSqlDefaultKeyword>
+    DB: Backend,
+    DB::BatchInsertSupport: sql_dialect::batch_insert_support::BatchInsertViaValuesList,
 {
     fn rows_to_insert(&self) -> Option<usize> {
         Some(N)
@@ -96,7 +98,8 @@ where
 
 impl<T, DB> CanInsertInSingleQuery<DB> for [T]
 where
-    DB: Backend+ SqlDialect<InsertWithDefaultKeyword = sql_dialect::default_keyword_for_insert::IsoSqlDefaultKeyword>
+    DB: Backend,
+    DB::BatchInsertSupport: sql_dialect::batch_insert_support::BatchInsertViaValuesList,
 {
     fn rows_to_insert(&self) -> Option<usize> {
         Some(self.len())
@@ -105,7 +108,8 @@ where
 
 impl<T, DB> CanInsertInSingleQuery<DB> for Vec<T>
 where
-    DB: Backend+ SqlDialect<InsertWithDefaultKeyword = sql_dialect::default_keyword_for_insert::IsoSqlDefaultKeyword>,
+    DB: Backend,
+    DB::BatchInsertSupport: sql_dialect::batch_insert_support::BatchInsertViaValuesList,
 {
     fn rows_to_insert(&self) -> Option<usize> {
         Some(self.len())
@@ -132,6 +136,43 @@ where
             BatchInsertSupport = sql_dialect::batch_insert_support::PostgresLikeBatchInsertSupport,
         >,
     DB::InsertWithDefaultKeyword: sql_dialect::default_keyword_for_insert::SupportsDefaultKeyword,
+    ValuesClause<V, Tab>: QueryFragment<DB>,
+    V: QueryFragment<DB>,
+{
+    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        if !HAS_STATIC_QUERY_ID {
+            out.unsafe_to_cache_prepared();
+        }
+
+        let mut values = self.values.iter();
+        if let Some(value) = values.next() {
+            value.walk_ast(out.reborrow())?;
+        }
+        for value in values {
+            out.push_sql(", (");
+            value.values.walk_ast(out.reborrow())?;
+            out.push_sql(")");
+        }
+        Ok(())
+    }
+}
+
+// `SqliteLikeBatchInsertSupport` mirrors the Postgres-like path but
+// without the `SupportsDefaultKeyword` bound, so backends that accept
+// multi-row `VALUES (..), (..)` syntax but reject `DEFAULT` inside a
+// VALUES list (SQLite, Turso) can opt in. The SQL emission is
+// identical; it's callers' responsibility to supply every column for
+// every row (which `#[derive(Insertable)]` already does for non-Option
+// fields). `CanInsertInSingleQuery` impls are shared via the
+// `BatchInsertViaValuesList` marker above.
+impl<Tab, DB, V, QId, const HAS_STATIC_QUERY_ID: bool>
+    QueryFragment<DB, sql_dialect::batch_insert_support::SqliteLikeBatchInsertSupport>
+    for BatchInsert<Vec<ValuesClause<V, Tab>>, Tab, QId, HAS_STATIC_QUERY_ID>
+where
+    DB: Backend
+        + SqlDialect<
+            BatchInsertSupport = sql_dialect::batch_insert_support::SqliteLikeBatchInsertSupport,
+        >,
     ValuesClause<V, Tab>: QueryFragment<DB>,
     V: QueryFragment<DB>,
 {
