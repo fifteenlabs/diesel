@@ -469,6 +469,26 @@ pub(crate) mod sql_dialect {
         pub struct PostgresLikeBatchInsertSupport;
 
         impl SupportsBatchInsert for PostgresLikeBatchInsertSupport {}
+
+        /// Like [`PostgresLikeBatchInsertSupport`] but for backends that
+        /// don't support the SQL `DEFAULT` keyword inside a `VALUES`
+        /// list (e.g. SQLite / Turso). Emits the same
+        /// `VALUES (..), (..), ..` shape; callers must supply every
+        /// column for every row.
+        #[derive(Debug, Copy, Clone)]
+        pub struct SqliteLikeBatchInsertSupport;
+
+        impl SupportsBatchInsert for SqliteLikeBatchInsertSupport {}
+
+        /// Marker trait implemented for batch-insert markers that emit
+        /// a single `INSERT ... VALUES (..), (..), ..` statement. Used
+        /// as a coherent bound on the shared `CanInsertInSingleQuery`
+        /// impls so both [`PostgresLikeBatchInsertSupport`] and
+        /// [`SqliteLikeBatchInsertSupport`] can pick them up.
+        pub trait BatchInsertViaValuesList {}
+
+        impl BatchInsertViaValuesList for PostgresLikeBatchInsertSupport {}
+        impl BatchInsertViaValuesList for SqliteLikeBatchInsertSupport {}
     }
     /// This module contains all reusable options to configure
     /// [`SqlDialect::ConcatClause`]
