@@ -246,6 +246,24 @@ pub trait SqlDialect: self::private::TrustedBackend {
         doc = "See [`sql_dialect::from_clause_syntax`] for provided default implementations"
     )]
     type EmptyFromClauseSyntax;
+    /// Configures how this backend renders the `FROM` clause of a join
+    /// carrying an `ON` condition.
+    ///
+    /// This selects between diesel's [`QueryFragment`](crate::query_builder::QueryFragment)
+    /// implementations for `JoinFromClause`, the fragment every
+    /// `inner_join`/`left_join` renders its joined sources through.
+    ///
+    /// Most backends wrap the joined tables and their `ON` condition in
+    /// parentheses, which is what the ANSI variant does. Some SQLite-derived
+    /// engines only accept a bare table name or subquery where a
+    /// parenthesized join group would go, and need the unparenthesized
+    /// variant instead.
+    ///
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::join_from_clause_syntax`] for provided default implementations"
+    )]
+    type JoinFromClauseSyntax;
     /// Configures how this backend handles `EXISTS()` expressions.
     ///
     /// This allows backends to provide a custom [`QueryFragment`](crate::query_builder::QueryFragment)
@@ -531,6 +549,42 @@ pub(crate) mod sql_dialect {
         /// if no table/view is queried
         #[derive(Debug, Copy, Clone)]
         pub struct AnsiSqlFromClauseSyntax;
+    }
+
+    /// This module contains all reusable options to configure
+    /// [`SqlDialect::JoinFromClauseSyntax`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    // Written `pub` (unlike `from_clause_syntax` above) because the
+    // `MultiConnection` derive names `AnsiSqlJoinFromClauseSyntax` in the
+    // `SqlDialect` impl it generates in downstream crates, which don't
+    // enable the third-party-backend feature.
+    pub mod join_from_clause_syntax {
+
+        /// Indicates that this backend wraps the joined tables and the
+        /// `ON` condition of a join in parentheses, as in
+        /// `FROM ("a" INNER JOIN "b" ON ("a"."id" = "b"."a_id"))`
+        #[derive(Debug, Copy, Clone)]
+        pub struct AnsiSqlJoinFromClauseSyntax;
+
+        /// Indicates that this backend cannot parse a parenthesized join
+        /// group in a `FROM` clause and wants the joined tables and the
+        /// `ON` condition emitted bare, as in
+        /// `FROM "a" INNER JOIN "b" ON ("a"."id" = "b"."a_id")`
+        ///
+        /// The two forms are equivalent for the joins diesel builds by
+        /// chaining `inner_join`/`left_join` on a single query source,
+        /// because SQL joins associate to the left and an `ON` condition
+        /// binds to the nearest join. They are *not* equivalent when a join
+        /// appears on the right-hand side of another join
+        /// (`a.left_join(b.inner_join(c))`): there the parentheses carry
+        /// meaning, and a backend selecting this variant emits SQL its own
+        /// parser will reject. Such a backend cannot express nested joins
+        /// at all — the parenthesized form it would need is exactly what it
+        /// cannot parse — so the failure is a loud one either way.
+        #[derive(Debug, Copy, Clone)]
+        pub struct UnparenthesizedJoinFromClauseSyntax;
     }
 
     /// This module contains all reusable options to configure

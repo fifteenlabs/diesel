@@ -1671,6 +1671,10 @@ fn generate_backend(connection_types: &[ConnectionVariant]) -> TokenStream {
             type BatchInsertSupport = MultiBatchInsertSupport;
             type DefaultValueClauseForInsert = MultiDefaultValueClauseForInsert;
             type EmptyFromClauseSyntax = MultiEmptyFromClauseSyntax;
+            // Every backend a MultiConnection can wrap parenthesizes the
+            // `FROM` clause of a join, so there is nothing to dispatch on
+            // here and the shared ANSI impl can be used directly.
+            type JoinFromClauseSyntax = diesel::internal::derives::multiconnection::sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax;
             type ExistsSyntax = MultiExistsSyntax;
             type ArrayComparison = MultiArrayComparisonSyntax;
             type ConcatClause = MultiConcatClauseSyntax;
