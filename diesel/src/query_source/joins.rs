@@ -1,7 +1,6 @@
 use super::{AppearsInFromClause, Plus, QueryRelation};
 use crate::backend::Backend;
 use crate::backend::DieselReserveSpecialization;
-use crate::expression::grouped::Grouped;
 use crate::expression::nullable::Nullable;
 use crate::prelude::*;
 use crate::query_builder::*;
@@ -169,6 +168,60 @@ impl<DB: Backend> nodes::MiddleFragment<DB> for OnKeyword {
     }
 }
 
+/// The `FROM` clause fragment of a join carrying an `ON` condition.
+///
+/// Rendering is specialized per backend via
+/// [`SqlDialect::JoinFromClauseSyntax`](crate::backend::SqlDialect::JoinFromClauseSyntax):
+/// almost every SQL dialect parenthesizes the group, but some
+/// SQLite-derived engines only accept a bare table name or subquery in that
+/// position and need it emitted without the parentheses.
+#[derive(Debug, Clone, Copy, QueryId)]
+#[doc(hidden)]
+pub struct JoinFromClause<Join, On>(nodes::InfixNode<Join, On, OnKeyword>);
+
+impl<DB, Join, On> QueryFragment<DB> for JoinFromClause<Join, On>
+where
+    DB: Backend,
+    Self: QueryFragment<DB, DB::JoinFromClauseSyntax>,
+{
+    fn walk_ast<'b>(&'b self, pass: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        <Self as QueryFragment<DB, DB::JoinFromClauseSyntax>>::walk_ast(self, pass)
+    }
+}
+
+impl<DB, Join, On>
+    QueryFragment<DB, crate::backend::sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax>
+    for JoinFromClause<Join, On>
+where
+    DB: Backend<
+            JoinFromClauseSyntax = crate::backend::sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax,
+        >,
+    nodes::InfixNode<Join, On, OnKeyword>: QueryFragment<DB>,
+{
+    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        out.push_sql("(");
+        self.0.walk_ast(out.reborrow())?;
+        out.push_sql(")");
+        Ok(())
+    }
+}
+
+impl<DB, Join, On>
+    QueryFragment<
+        DB,
+        crate::backend::sql_dialect::join_from_clause_syntax::UnparenthesizedJoinFromClauseSyntax,
+    > for JoinFromClause<Join, On>
+where
+    DB: Backend<
+            JoinFromClauseSyntax = crate::backend::sql_dialect::join_from_clause_syntax::UnparenthesizedJoinFromClauseSyntax,
+        >,
+    nodes::InfixNode<Join, On, OnKeyword>: QueryFragment<DB>,
+{
+    fn walk_ast<'b>(&'b self, out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        self.0.walk_ast(out)
+    }
+}
+
 impl<Join, On> QuerySource for JoinOn<Join, On>
 where
     Join: QuerySource,
@@ -176,11 +229,11 @@ where
     On::SqlType: BoolOrNullableBool,
     Join::DefaultSelection: SelectableExpression<Self>,
 {
-    type FromClause = Grouped<nodes::InfixNode<Join::FromClause, On, OnKeyword>>;
+    type FromClause = JoinFromClause<Join::FromClause, On>;
     type DefaultSelection = Join::DefaultSelection;
 
     fn from_clause(&self) -> Self::FromClause {
-        Grouped(nodes::InfixNode::new(
+        JoinFromClause(nodes::InfixNode::new(
             self.join.from_clause(),
             self.on.clone(),
             OnKeyword,
