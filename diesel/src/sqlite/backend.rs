@@ -64,6 +64,7 @@ impl SqlDialect for Sqlite {
     type BatchUpdateSupport = SqliteBatchUpdate;
 
     type EmptyFromClauseSyntax = sql_dialect::from_clause_syntax::AnsiSqlFromClauseSyntax;
+    type JoinFromClauseSyntax = sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax;
     type SelectStatementSyntax = sql_dialect::select_statement_syntax::AnsiSqlSelectStatement;
 
     type ExistsSyntax = sql_dialect::exists_syntax::AnsiSqlExistsSyntax;
