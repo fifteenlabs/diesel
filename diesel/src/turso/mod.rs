@@ -5,8 +5,10 @@
 //! than riding on diesel's `Sqlite`: the raw value type is
 //! `turso::Value` rather than a byte buffer, the bind collector hands the
 //! driver a `Vec<turso::Value>` rather than a statement to bind onto, and
-//! the SQL differs in the one place noted on
-//! [`Turso`]'s `SqlDialect` impl. Everything else about the
+//! and the SQL differs in the two places noted on [`Turso`]'s `SqlDialect`
+//! impl — an unparenthesized join `FROM` clause, and a `LIMIT` inside a
+//! subselect, which is written into the text rather than bound because
+//! Turso's planner discards a placeholder there. Everything else about the
 //! dialect mirrors SQLite's.
 //!
 //! # Why the connection is not here

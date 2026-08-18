@@ -64,6 +64,7 @@ impl SqlDialect for Mysql {
 
     type SqlFunctionParameterNotation =
         sql_dialect::sql_function_parameter_notation::PositionalNotationOnly;
+    type SubselectLimitSyntax = sql_dialect::subselect_limit_syntax::BindSubselectLimit;
 }
 
 impl DieselReserveSpecialization for Mysql {}

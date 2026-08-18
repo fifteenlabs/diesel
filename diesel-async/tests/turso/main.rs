@@ -31,6 +31,7 @@ mod shared_string;
 mod statement_cache;
 mod stream_cancellation;
 mod strict_type_support;
+mod subselect_limit;
 mod to_sql_owned;
 mod type_probe;
 mod union_expressions;
