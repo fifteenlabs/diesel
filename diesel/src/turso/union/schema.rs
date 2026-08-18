@@ -186,8 +186,8 @@ pub trait UnionSchema: Sized {
     ///
     /// This is the machine-generated copy of the layout that the golden
     /// tests compare migrations against and that
-    /// [`verify_declared_types`](crate::turso::union::verify_declared_types)
-    /// compares an open database against.
+    /// `diesel_async::turso::probe::verify_declared_types` compares an open
+    /// database against.
     fn create_type_sql() -> String;
 
     /// Human-readable tag name for this instance. Default derives from
