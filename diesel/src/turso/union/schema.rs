@@ -153,12 +153,19 @@ pub trait UnionSchema: Sized {
 
     /// Variant tag names in declaration order. Index into this slice
     /// equals the tag byte sent over the wire.
+    ///
+    /// Names as *Turso* spells them, which for a name the engine requotes
+    /// when it stores the declaration includes the quotes — the same string
+    /// `union_tag(col)` returns and `UnionVariant::TAG_NAME` carries. See
+    /// [`expr`](super::expr) for why they are not always the Rust
+    /// spelling.
     fn variants() -> &'static [&'static str];
 
     /// Field names per variant, aligned with `variants()`. Struct variants
-    /// emit their declaration-order field idents; scalar variants emit an
-    /// empty slice. Source of truth for rendering (e.g. `fifteen-cli db`)
-    /// so the field layout never drifts from the Rust enum.
+    /// emit their declaration-order field names — Turso's spelling of
+    /// them, as with `variants()` — and scalar variants emit an empty
+    /// slice. Source of truth for rendering (e.g. `fifteen-cli db`) so the
+    /// field layout never drifts from the Rust enum.
     fn variant_fields() -> &'static [&'static [&'static str]];
 
     /// Tag byte for this instance.

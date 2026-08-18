@@ -317,6 +317,14 @@ fn read_paren_group(chars: &[char], i: usize) -> Option<(String, usize)> {
 
 /// Split a member list on top-level commas, then each member on its first
 /// whitespace run: `"  telegram_user   INT "` → `("telegram_user", "INT")`.
+///
+/// A quoted member name keeps its quotes, which is right: Turso quotes any
+/// name it would not lex back as a plain identifier and the quotes are then
+/// part of the name (see `diesel_derives`' `stored_name`), so `"first" INT`
+/// has to compare equal to the derive's `"first" INT` and unequal to a
+/// migration's bare `first INT`. The one shape this would get wrong is a
+/// quoted name containing whitespace, which would split inside the quotes —
+/// unreachable from the derive, whose names are Rust identifiers.
 fn split_members(body: &str) -> Vec<(String, String)> {
     let mut members = Vec::new();
     let mut depth = 0usize;
@@ -387,6 +395,35 @@ mod tests {
             decls[1].canonical(),
             "CREATE TYPE message_id_v4 AS UNION(telegram telegram_mid, email int)"
         );
+    }
+
+    /// A member name Turso requoted is a different member name, and the
+    /// comparison has to say so. Both directions matter: a derive that has
+    /// started quoting a keyword must match a database that stores it
+    /// quoted, and must *not* match a migration that wrote it bare — the
+    /// second is the signal that the migration text needs updating.
+    #[test]
+    fn a_quoted_member_name_is_not_the_bare_one() {
+        let decls = parse_create_types(r#"CREATE TYPE k AS UNION("first" INT, second INT)"#);
+        assert_eq!(
+            decls[0].members,
+            vec![
+                (r#""first""#.to_string(), "INT".to_string()),
+                ("second".to_string(), "INT".to_string()),
+            ]
+        );
+
+        let stored = index_by_name(parse_create_types(
+            r#"CREATE TYPE k AS UNION("first" INT, second INT)"#,
+        ));
+        let drift = check_declarations(
+            r#"CREATE TYPE k AS UNION("first" INT, second INT)"#,
+            &stored,
+        );
+        assert!(drift.is_empty(), "{drift}");
+
+        let drift = check_declarations("CREATE TYPE k AS UNION(first INT, second INT)", &stored);
+        assert_eq!(drift.differs.len(), 1);
     }
 
     #[test]
