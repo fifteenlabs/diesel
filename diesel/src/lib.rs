@@ -313,6 +313,8 @@ pub mod mysql;
 pub mod pg;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+#[cfg(feature = "turso")]
+pub mod turso;
 
 #[macro_use]
 mod reexport_ambiguities;
@@ -328,6 +330,9 @@ pub use diesel_derives::{
 };
 
 pub use diesel_derives::MultiConnection;
+
+#[cfg(feature = "turso")]
+pub use diesel_derives::{UnionSchema, UnionStructPayload};
 
 pub mod dsl {
     //! Includes various helper types and bare functions which are named too

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "diesel",
+    "diesel-async",
     "diesel_cli",
     "diesel_derives",
     "diesel_tests",
@@ -42,6 +43,10 @@ include = ["src/**/*.rs", "tests/**/*.rs", "LICENSE-*", "README.md"]
 edition = "2021"
 
 [workspace.dependencies]
+# Must stay spelled exactly as the consuming workspace spells it: cargo keys a
+# git source on URL + ref, and two different specs mean two `turso` crates in
+# one graph, whose `turso::Value` types are not the same type.
+turso = { git = "https://github.com/tursodatabase/turso", branch = "main", default-features = false, features = ["pure-rust-crypto"] }
 libsqlite3-sys = ">=0.30.1,<0.36.0"
 pq-sys = ">=0.6,<0.8"
 openssl-sys = "0.9.100"
