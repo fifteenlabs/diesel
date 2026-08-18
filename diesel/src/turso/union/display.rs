@@ -7,6 +7,12 @@
 
 use crate::turso::union::{UnionSchema, wire};
 
+/// Render a UNION blob against `T`'s layout, or `None` if the bytes do
+/// not decode as one.
+///
+/// `None` rather than an error because the only callers are diagnostic —
+/// a CLI column renderer and test output — and a half-rendered row is
+/// more use to them than a failure.
 pub fn render_blob<T: UnionSchema>(blob: &[u8]) -> Option<String> {
     let (tag_index, outer) = wire::decode_union(blob).ok()?;
     let tag = *T::variants().get(tag_index as usize)?;

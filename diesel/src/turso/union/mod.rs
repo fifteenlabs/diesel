@@ -52,6 +52,29 @@
 //! a struct is the case that hurts: reordering two `Option<SharedString>`
 //! fields in a 30-field payload compiles clean and is caught only at (2) or
 //! (3). Keep field order alone.
+//!
+//! # Reading a union from SQL
+//!
+//! The codec above is how a whole value crosses the wire. Asking the
+//! *database* about one variant or one field is the other half, and it is
+//! [`expr`]: `union_extract`, `struct_extract` and `union_tag` as typed
+//! expression nodes, addressed through variant and field types the derive
+//! emits beside the enum.
+//!
+//! ```ignore
+//! use fifteen_db::schema::meta::{message_id::telegram, messages};
+//!
+//! messages::table
+//!     .filter(messages::mid.extract(telegram::variant).is_not_null())
+//!     .filter(messages::mid.extract(telegram::variant).field(telegram::chat_id).eq(chat_id))
+//! ```
+//!
+//! That replaced ~60 `dsl::sql` fragments across `fifteen-db` and
+//! `fifteen-search`. Field names became paths, bind types became checked,
+//! and — the reason it is worth more than tidiness — the statements became
+//! cacheable: diesel marks a `SqlLiteral` unsafe to cache and the verdict
+//! covers the entire query around it, so one three-function fragment cost
+//! the whole statement its cached program on every call.
 
 pub mod codec;
 pub mod ddl;
@@ -63,7 +86,8 @@ pub mod wire;
 
 pub use codec::{TaggedUnion, decode_from_blob, encode_for_bind};
 pub use ddl::{
-    DeclarationDrift, TypeDecl, TypeKind, check_declarations, index_by_name, parse_create_types,
+    DeclarationDrift, TypeDecl, TypeKind, check_declarations, index_by_name,
+    parse_create_types,
 };
 pub use expr::{
     Composite, CompositeExpressionMethods, CompositeField, CompositeShape, CompositeSqlType,

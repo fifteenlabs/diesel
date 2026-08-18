@@ -1,5 +1,5 @@
 //! `#[derive(UnionSchema)]` — emit the trait + per-type ToSql/FromSql glue
-//! for the Turso backend's UNION support (`diesel::turso::union`).
+//! for turbo-diesel's UNION support.
 //!
 //! Variant shape → wire shape:
 //!
@@ -49,18 +49,62 @@
 //!   than a property of the type, e.g. a `Vec<SharedString>` stored as a
 //!   JSON array in TEXT.
 //!
+//! # The identifier module
+//!
+//! Beside the impls, the derive emits a module named `snake_case(EnumIdent)`
+//! holding one type per variant and one per struct field — the same trick
+//! `table!` plays with columns, and for the same reason: it is what makes
+//! a field access an expression the compiler checks rather than a string in
+//! a `dsl::sql` fragment.
+//!
+//! ```ignore
+//! // for `enum MessageId { #[union(struct_type = "telegram_mid")] Telegram { chat_id: TgChatId, … } }`
+//! message_id::telegram::variant     // union_extract(<col>, 'telegram')
+//! message_id::telegram::fields      // the STRUCT's field set, as a type
+//! message_id::telegram::chat_id     // struct_extract(…, 'chat_id')
+//! message_id::telegram::TAG_NAME    // "telegram"
+//! ```
+//!
+//! Used through `diesel::turso::union::{UnionExpressionMethods,
+//! CompositeExpressionMethods}` — see `diesel::turso::union::expr`.
+//!
+//! Three things follow from the module being named after the enum:
+//!
+//! * A union enum cannot share a scope with a `table!` of the same
+//!   snake_case name — two items would want to be `keyed`. Rename one; the
+//!   DDL name is `#[union(name = "…")]` and is unaffected.
+//! * A variant's tag has to be a Rust identifier, since it names the
+//!   submodule.
+//! * A struct field cannot be called `variant`, `fields` or `TAG_NAME`,
+//!   which are the names the submodule already uses. Each is a compile
+//!   error that says so.
+//!
+//! Field types are named as the enum names them (`TgChatId`), which the
+//! module can only resolve because it opens with `use super::*`, and their
+//! SQL types are hidden aliases at the module's own level so the variant
+//! submodules never reach two scopes up.
+//!
 //! # `#[derive(UnionStructPayload)]`
 //!
 //! Implement the `UnionStructPayload` trait on a plain struct with named
 //! fields. Pairs with `#[union(boxed)]` to give a UNION enum variant a
 //! boxed payload whose fields are laid out via the struct's declaration
 //! order.
+//!
+//! It emits an identifier module too, one level shallower — the payload's
+//! fields are `signal_contact_payload::aci`, not
+//! `social_data::signal_contact::aci`, because the enum's derive can see
+//! the payload only as a name and cannot enumerate its fields. The payload
+//! type itself is the composite marker the fields are typed against, so
+//! `col.extract(signal_contact::variant).field(signal_contact_payload::aci)`
+//! type-checks exactly as an inline struct variant's does.
 
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
     Attribute, Data, DataStruct, DeriveInput, Fields, Ident, LitStr, Type, Variant,
+    parse_macro_input,
 };
 
 pub(crate) fn expand_union_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
@@ -255,12 +299,12 @@ fn emit_identifier_module(
                 for (position, field) in fields.iter().enumerate() {
                     let field_ident = &field.ident;
                     let name = field_ident.to_string();
-                    if name == "variant" || name == "fields" {
+                    if matches!(name.as_str(), "variant" | "fields" | "TAG_NAME") {
                         return Err(syn::Error::new_spanned(
                             field_ident,
                             format!(
                                 "UnionSchema: a field named `{name}` would collide with the \
-                                 generated `{name}` type in `{mod_ident}::{tag}` — rename it"
+                                 generated `{name}` in `{mod_ident}::{tag}` — rename it"
                             ),
                         ));
                     }
@@ -335,6 +379,13 @@ fn emit_identifier_module(
         variant_mods.push(quote! {
             #[doc = #variant_doc]
             pub mod #tag_ident {
+                /// This variant's tag, as it is spelled in the DDL and in
+                /// `union_tag(col)` — the same string `variant` renders,
+                /// and the same value as `UnionVariant::TAG_NAME`, repeated
+                /// here as a plain const so a `union_tag(col).eq(…)`
+                /// comparison needs no trait import.
+                pub const TAG_NAME: &str = #tag;
+
                 #[doc = #variant_doc]
                 #[derive(Debug, Clone, Copy, Default, ::diesel::query_builder::QueryId)]
                 pub struct variant;

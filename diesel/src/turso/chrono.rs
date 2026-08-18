@@ -20,12 +20,12 @@ use crate::turso::value::TursoValue;
 pub(crate) mod fmt {
     use ::chrono::{NaiveDate, NaiveDateTime, NaiveTime, ParseResult};
 
-    pub const DATE: &str = "%F";
-    pub const TIME_WRITE: &str = "%H:%M:%S%.f";
-    pub const DATETIME_WRITE: &str = "%F %T%.f";
-    pub const DATETIMETZ_WRITE: &str = "%F %T%.f%:z";
+    pub(crate) const DATE: &str = "%F";
+    pub(crate) const TIME_WRITE: &str = "%H:%M:%S%.f";
+    pub(crate) const DATETIME_WRITE: &str = "%F %T%.f";
+    pub(crate) const DATETIMETZ_WRITE: &str = "%F %T%.f%:z";
 
-    pub const TIME_READ: &[&str] = &[
+    pub(crate) const TIME_READ: &[&str] = &[
         "%H:%M:%S%.f",
         "%H:%M:%S",
         "%H:%M",
@@ -37,7 +37,7 @@ pub(crate) mod fmt {
         "%H:%M:%S%.f%:z",
     ];
 
-    pub const NAIVE_DATETIME_READ: &[&str] = &[
+    pub(crate) const NAIVE_DATETIME_READ: &[&str] = &[
         "%F %T%.f",
         "%FT%T%.f",
         "%F %T",
@@ -58,17 +58,17 @@ pub(crate) mod fmt {
         "%FT%T%.f%:z",
     ];
 
-    pub fn parse_date(s: &str) -> ParseResult<NaiveDate> {
+    pub(crate) fn parse_date(s: &str) -> ParseResult<NaiveDate> {
         NaiveDate::parse_from_str(s, DATE)
     }
 
-    pub fn parse_time(s: &str) -> Option<NaiveTime> {
+    pub(crate) fn parse_time(s: &str) -> Option<NaiveTime> {
         TIME_READ
             .iter()
             .find_map(|f| NaiveTime::parse_from_str(s, f).ok())
     }
 
-    pub fn parse_naive_datetime(s: &str) -> Option<NaiveDateTime> {
+    pub(crate) fn parse_naive_datetime(s: &str) -> Option<NaiveDateTime> {
         NAIVE_DATETIME_READ
             .iter()
             .find_map(|f| NaiveDateTime::parse_from_str(s, f).ok())

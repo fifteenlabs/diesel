@@ -25,14 +25,20 @@ pub type EncodeResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 /// break `Eq` / `Clone` / `'static` for callers that need them).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueKind {
+    /// `turso::Value::Null`.
     Null,
+    /// `turso::Value::Integer`.
     Integer,
+    /// `turso::Value::Real`.
     Real,
+    /// `turso::Value::Text`.
     Text,
+    /// `turso::Value::Blob`.
     Blob,
 }
 
 impl ValueKind {
+    /// The storage class of a value, with its payload dropped.
     pub fn of(v: &turso::Value) -> Self {
         match v {
             turso::Value::Null => Self::Null,
@@ -56,23 +62,32 @@ impl std::fmt::Display for ValueKind {
     }
 }
 
+/// Why a stored UNION value did not decode into its Rust enum.
 #[derive(Debug, Error)]
 pub enum DecodeError {
+    /// The bytes were not a well-formed record — see [`WireError`].
+    ///
+    /// [`WireError`]: super::wire::WireError
     #[error(transparent)]
     Wire(#[from] super::wire::WireError),
 
     /// The wire tag index didn't name a variant of the target enum.
     #[error("unknown union variant: tag index {index} (expected one of {expected:?})")]
     UnknownVariant {
+        /// The tag index read off the wire.
         index: u8,
+        /// The variant names this enum does declare, in tag order.
         expected: &'static [&'static str],
     },
 
     /// A struct variant's inner record had the wrong number of fields.
     #[error("union variant {variant:?}: expected {expected} fields, got {got}")]
     FieldCount {
+        /// The variant being decoded.
         variant: &'static str,
+        /// How many fields its Rust declaration has.
         expected: usize,
+        /// How many the stored record carried.
         got: usize,
     },
 
@@ -80,7 +95,9 @@ pub enum DecodeError {
     /// we were trying to decode into.
     #[error("expected {expected}, got {got_kind}")]
     TypeMismatch {
+        /// What the Rust side was decoding into.
         expected: &'static str,
+        /// The storage class actually found.
         got_kind: ValueKind,
     },
 
@@ -95,14 +112,23 @@ pub enum DecodeError {
     /// what watches for that.)
     #[error("field {variant}.{field}: {message}")]
     Field {
+        /// The variant the field belongs to.
         variant: &'static str,
+        /// The field's name, which is the first thing worth knowing when
+        /// field order has drifted.
         field: &'static str,
+        /// What the field's own decoder said.
         message: String,
     },
 
     /// A narrowing integer cast failed (e.g. i64 → i16 overflow).
     #[error("integer {value} out of range for {target}")]
-    IntOutOfRange { value: i64, target: &'static str },
+    IntOutOfRange {
+        /// The stored value.
+        value: i64,
+        /// The Rust type it would not fit.
+        target: &'static str,
+    },
 
     /// A TEXT payload was not valid UTF-8.
     #[error("TEXT was not valid UTF-8: {0}")]

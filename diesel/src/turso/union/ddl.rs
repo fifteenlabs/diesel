@@ -30,7 +30,10 @@ use std::fmt;
 /// Which flavour of composite a `CREATE TYPE` declared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeKind {
+    /// `CREATE TYPE … AS STRUCT(…)` — a fixed, ordered field list.
     Struct,
+    /// `CREATE TYPE … AS UNION(…)` — a tagged choice, where a member's
+    /// position is its wire tag.
     Union,
 }
 
@@ -49,8 +52,12 @@ impl TypeKind {
 /// the position *is* the wire tag, for a STRUCT it is the field index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeDecl {
+    /// The declared type's name, as written in the DDL.
     pub name: String,
+    /// Whether it was declared as a STRUCT or a UNION.
     pub kind: TypeKind,
+    /// `(member name, member type)` in declaration order. Order is the
+    /// payload, not presentation — see the module docs.
     pub members: Vec<(String, String)>,
 }
 
@@ -154,6 +161,7 @@ pub struct DeclarationDrift {
 }
 
 impl DeclarationDrift {
+    /// No drift: every declared type was found and every one agreed.
     pub fn is_empty(&self) -> bool {
         self.missing.is_empty() && self.differs.is_empty()
     }

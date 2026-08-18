@@ -55,6 +55,7 @@ use crate::turso::value::TursoValue;
 /// `impl TursoFieldType for ChatId { type SqlType = BigInt; }` — beside
 /// the `ToSql`/`FromSql` pair that does the actual work.
 pub trait TursoFieldType {
+    /// The SQL type this Rust type is stored as by default.
     type SqlType;
 }
 
