@@ -1,18 +1,25 @@
-//! The expression nodes in `diesel::turso::expr`: `CASE`, `coalesce`, and
-//! SQLite's two-argument `max`.
+//! `CASE`, `coalesce`, and SQLite's two-argument `max`, against Turso.
 //!
 //! These exist so a statement that needs one of them can still be written in
 //! the typed DSL instead of collapsing into a `sql_query` string. The tests
-//! therefore check both halves of that claim: the SQL text (a node that
-//! renders `WHEN` in the wrong order, or forgets its parentheses, is wrong in
-//! a way only the text shows) and the answers (a node that renders fine but
-//! binds its values in the wrong order is wrong in a way only a run shows).
+//! check both halves of that claim: the SQL text (an expression that renders
+//! `WHEN` in the wrong order, or forgets its parentheses, is wrong in a way
+//! only the text shows) and the answers (one that renders fine but binds its
+//! values in the wrong order is wrong in a way only a run shows).
+//!
+//! `CASE` here is [`diesel::dsl::case_when`], diesel's own. It is tested even
+//! though it is not our code, because *this backend* is: `QueryFragment` is
+//! implemented per backend, the SQL it emits has to survive Turso's parser,
+//! and Turso is not a backend diesel's own suite runs against. `coalesce` and
+//! `max2` are ours, from `diesel::turso::expr`, because diesel has neither —
+//! its `max` is the one-argument aggregate.
 
 use anyhow::Result;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Integer};
 use diesel_async::{AsyncConnection, RunQueryDsl, SimpleAsyncConnection};
-use diesel::turso::expr::{case_when, coalesce, max2};
+use diesel::dsl::case_when;
+use diesel::turso::expr::{coalesce, max2};
 use diesel::turso::Turso;
 use diesel_async::turso::TursoConnection;
 
@@ -49,15 +56,22 @@ async fn seeded() -> Result<TursoConnection> {
 
 /// The rendering, spelled out once. Every other test here leans on this
 /// being the shape being run.
+///
+/// Diesel parenthesises each `WHEN`, `THEN` and `ELSE` operand and emits a
+/// bare `CASE … END` rather than wrapping the whole expression. It needs no
+/// wrapper: `CASE … END` is self-delimiting in the SQL grammar, so it takes
+/// its precedence from its own keywords wherever it lands. The doubled
+/// parentheses around each `WHEN` are diesel's `Grouped` applied to an
+/// operand that is already `Grouped` — noise in the text, not in the parse.
 #[test]
 fn renders_arms_in_order_with_the_else_last() {
-    let expr = case_when::<Integer, _, _>(jobs::state.eq(3), 0)
+    let expr = case_when::<_, _, Integer>(jobs::state.eq(3), 0)
         .when(jobs::state.eq(4), 1)
         .otherwise(jobs::state);
     let query = jobs::table.select(expr);
     assert_eq!(
         diesel::debug_query::<Turso, _>(&query).to_string(),
-        r#"SELECT (CASE WHEN ("jobs"."state" = ?) THEN ? WHEN ("jobs"."state" = ?) THEN ? ELSE "jobs"."state" END) FROM "jobs" -- binds: [3, 0, 4, 1]"#
+        r#"SELECT CASE WHEN (("jobs"."state" = ?)) THEN (?) WHEN (("jobs"."state" = ?)) THEN (?) ELSE ("jobs"."state") END FROM "jobs" -- binds: [3, 0, 4, 1]"#
     );
 }
 
@@ -68,7 +82,7 @@ async fn case_in_a_where_clause_picks_the_matching_arm() -> Result<()> {
     let mut conn = seeded().await?;
 
     // updated_at + backoff(retry_count) <= now, with the ladder as a CASE.
-    let backoff = case_when::<BigInt, _, _>(jobs::retry_count.eq(0), 0i64)
+    let backoff = case_when::<_, _, BigInt>(jobs::retry_count.eq(0), 0i64)
         .when(jobs::retry_count.eq(1), 2_000i64)
         .when(jobs::retry_count.eq(2), 8_000i64)
         .otherwise(600_000i64);
@@ -97,9 +111,9 @@ async fn case_in_a_set_clause_rewrites_only_the_matching_rows() -> Result<()> {
     diesel::update(jobs::table)
         .set((
             jobs::state
-                .eq(case_when::<Integer, _, _>(jobs::state.eq_any([3, 4, 5]), 0)
+                .eq(case_when::<_, _, Integer>(jobs::state.eq_any([3, 4, 5]), 0)
                     .otherwise(jobs::state)),
-            jobs::retry_count.eq(case_when::<Integer, _, _>(jobs::state.eq_any([3, 4, 5]), 0)
+            jobs::retry_count.eq(case_when::<_, _, Integer>(jobs::state.eq_any([3, 4, 5]), 0)
                 .otherwise(jobs::retry_count)),
         ))
         .execute(&mut conn)
@@ -136,10 +150,10 @@ async fn several_case_aggregates_share_one_scan() -> Result<()> {
         .select((
             count_star(),
             sum(
-                case_when::<Integer, _, _>(jobs::last_error.like("length mismatch%"), 1)
+                case_when::<_, _, Integer>(jobs::last_error.like("length mismatch%"), 1)
                     .otherwise(0),
             ),
-            sum(case_when::<Integer, _, _>(jobs::last_error.like("%expired%"), 1).otherwise(0)),
+            sum(case_when::<_, _, Integer>(jobs::last_error.like("%expired%"), 1).otherwise(0)),
         ))
         .get_result(&mut conn)
         .await?;
