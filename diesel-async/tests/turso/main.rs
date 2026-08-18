@@ -1,9 +1,9 @@
 //! The Turso backend's acceptance suite.
 //!
-//! One test binary rather than thirty-one: each of these opens its own
+//! One test binary rather than thirty-odd: each of these opens its own
 //! temporary database, so they cost nothing to run together, and one
-//! binary links the (large) query-builder generics once instead of per
-//! file.
+//! binary links the (large) query-builder generics once instead of
+//! once per file.
 
 mod batch_insert;
 mod case_expression;
@@ -33,6 +33,6 @@ mod stream_cancellation;
 mod strict_type_support;
 mod to_sql_owned;
 mod type_probe;
+mod union_expressions;
 mod upsert;
 mod wire_differential;
-mod zz_probe_index;
