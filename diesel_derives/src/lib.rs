@@ -26,7 +26,7 @@ use proc_macro::TokenStream;
 use sql_function::ExternSqlBlock;
 use syn::parse_quote;
 #[cfg(feature = "turso")]
-use syn::{DeriveInput, parse_macro_input};
+use syn::{parse_macro_input, DeriveInput};
 
 mod allow_tables_to_appear_in_same_query;
 mod field;
@@ -52,10 +52,10 @@ mod selectable;
 mod sql_function;
 mod sql_type;
 mod table;
-#[cfg(feature = "turso")]
-mod turso_union;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "turso")]
+mod turso_union;
 mod valid_grouping;
 
 /// Implements `AsChangeset`

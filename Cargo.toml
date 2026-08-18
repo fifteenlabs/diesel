@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "diesel",
-    "diesel-async",
     "diesel_cli",
     "diesel_derives",
     "diesel_tests",

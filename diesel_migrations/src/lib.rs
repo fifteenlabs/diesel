@@ -53,12 +53,16 @@
 //! trait directly.
 
 mod combined_migrations;
+#[cfg(feature = "async")]
+mod async_harness;
 mod embedded_migrations;
 mod errors;
 mod file_based_migrations;
 mod migration_harness;
 mod rust_migrations;
 
+#[cfg(feature = "async")]
+pub use crate::async_harness::AsyncMigrationHarness;
 pub use self::embedded_migrations::EmbeddedMigrations;
 pub use self::file_based_migrations::FileBasedMigrations;
 pub use self::migration_harness::{HarnessWithOutput, MigrationHarness};

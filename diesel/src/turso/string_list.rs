@@ -23,7 +23,7 @@ use crate::serialize::{self, IsNull, Output, ToSql};
 use crate::sql_types::Text;
 
 use crate::turso::backend::Turso;
-use crate::turso::value::{TursoValue, mismatch};
+use crate::turso::value::{mismatch, TursoValue};
 
 impl ToSql<Text, Turso> for Vec<String> {
     fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
@@ -71,7 +71,7 @@ mod shared {
     use gpui::SharedString;
 
     use crate::turso::backend::Turso;
-    use crate::turso::value::{TursoValue, mismatch};
+    use crate::turso::value::{mismatch, TursoValue};
 
     impl ToSql<Text, Turso> for Vec<SharedString> {
         fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
