@@ -1,0 +1,145 @@
+//! Scalar `ToSql` / `FromSql` impls for the Turso backend.
+//!
+//! `Nullable<T>` falls out from diesel's `Option<T>` blanket impls once
+//! `push_null_value` works (see `bind.rs`). Date/Time/Timestamp use the
+//! chrono crate via the optional `turso-chrono` feature — see
+//! `super::chrono`.
+
+use crate::deserialize::{self, FromSql};
+use crate::query_builder::QueryId;
+use crate::serialize::{self, IsNull, Output, ToSql};
+use crate::sql_types;
+
+use crate::turso::backend::Turso;
+use crate::turso::value::{TursoValue, mismatch};
+
+// Widening integer codecs share the same shape: emit Value::Integer on
+// encode, narrow-and-validate on decode.
+macro_rules! int_codec {
+    ($sql_ty:ty, $rust_ty:ty) => {
+        impl ToSql<$sql_ty, Turso> for $rust_ty {
+            fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
+                out.set_value(*self);
+                Ok(IsNull::No)
+            }
+        }
+        impl FromSql<$sql_ty, Turso> for $rust_ty {
+            fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+                match v.as_turso() {
+                    turso::Value::Integer(i) => <$rust_ty>::try_from(*i).map_err(|_| {
+                        format!("integer {i} out of range for {}", stringify!($rust_ty),).into()
+                    }),
+                    other => mismatch(stringify!($rust_ty), other),
+                }
+            }
+        }
+    };
+}
+int_codec!(sql_types::SmallInt, i16);
+int_codec!(sql_types::Integer, i32);
+
+// i64 ↔ BigInt: no narrowing needed on the FromSql path.
+impl ToSql<sql_types::BigInt, Turso> for i64 {
+    fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
+        out.set_value(*self);
+        Ok(IsNull::No)
+    }
+}
+impl FromSql<sql_types::BigInt, Turso> for i64 {
+    fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+        match v.as_turso() {
+            turso::Value::Integer(i) => Ok(*i),
+            other => mismatch("Integer", other),
+        }
+    }
+}
+
+impl ToSql<sql_types::Bool, Turso> for bool {
+    fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
+        out.set_value(*self);
+        Ok(IsNull::No)
+    }
+}
+impl FromSql<sql_types::Bool, Turso> for bool {
+    fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+        match v.as_turso() {
+            turso::Value::Integer(i) => Ok(*i != 0),
+            other => mismatch("Integer(0|1)", other),
+        }
+    }
+}
+
+// Real types accept either Real or Integer on read — turso will hand back
+// whatever serial type fits, so we tolerate both.
+macro_rules! real_codec {
+    ($sql_ty:ty, $rust_ty:ty) => {
+        impl ToSql<$sql_ty, Turso> for $rust_ty {
+            fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
+                out.set_value(*self);
+                Ok(IsNull::No)
+            }
+        }
+        impl FromSql<$sql_ty, Turso> for $rust_ty {
+            fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+                match v.as_turso() {
+                    turso::Value::Real(f) => Ok(*f as $rust_ty),
+                    turso::Value::Integer(i) => Ok(*i as $rust_ty),
+                    other => mismatch(stringify!($rust_ty), other),
+                }
+            }
+        }
+    };
+}
+real_codec!(sql_types::Float, f32);
+real_codec!(sql_types::Double, f64);
+
+// Diesel provides blanket `ToSql<Text, DB> for String` forwarding to `str`,
+// so we only impl the `str` side.
+impl ToSql<sql_types::Text, Turso> for str {
+    fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
+        out.set_value(self);
+        Ok(IsNull::No)
+    }
+}
+impl FromSql<sql_types::Text, Turso> for String {
+    fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+        match v.as_turso() {
+            turso::Value::Text(s) => Ok(s.clone()),
+            other => mismatch("Text", other),
+        }
+    }
+}
+
+// Same story for Vec<u8>: diesel has a `Vec<u8>` blanket forwarding to `[u8]`.
+impl ToSql<sql_types::Binary, Turso> for [u8] {
+    fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
+        out.set_value(self);
+        Ok(IsNull::No)
+    }
+}
+impl FromSql<sql_types::Binary, Turso> for Vec<u8> {
+    fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+        match v.as_turso() {
+            turso::Value::Blob(b) => Ok(b.clone()),
+            other => mismatch("Blob", other),
+        }
+    }
+}
+
+/// The SQL type for a timestamp carrying a UTC offset.
+///
+/// Stored as ISO-8601 `TEXT`, because Turso is a STRICT-table engine and
+/// there is no wider storage class to put an offset in. Turso's own
+/// timestamp functions read the same spelling.
+///
+/// This is Turso's, not PostgreSQL's. It has to be: the `AsExpression`
+/// impls that let a `chrono::DateTime<Utc>` be bound against it are impls
+/// of a diesel trait for a chrono type, which only diesel itself can write.
+/// The out-of-tree arrangement this replaced could not, so it enabled
+/// diesel's `postgres_backend` feature purely to borrow
+/// `sql_types::Timestamptz` and the impls that came with it — dragging a
+/// whole second backend into every build that wanted a timezone-aware
+/// column. See `crate::type_impls::date_and_time` for where the impls are
+/// now written.
+#[derive(Debug, Clone, Copy, Default, QueryId, crate::sql_types::SqlType)]
+pub struct Timestamptz;
