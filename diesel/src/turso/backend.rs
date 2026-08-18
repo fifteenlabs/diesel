@@ -91,6 +91,10 @@ impl SqlDialect for Turso {
         sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpressions;
     type BuiltInWindowFunctionRequireOrder =
         sql_dialect::built_in_window_function_require_order::NoOrderRequired;
+    // The second place the dialect can't mirror SQLite, and the one that
+    // fails at run time rather than at parse time. See
+    // [`LiteralSubselectLimit`].
+    type SubselectLimitSyntax = LiteralSubselectLimit;
 }
 
 impl DieselReserveSpecialization for Turso {}
@@ -125,6 +129,43 @@ has_sql_type!(crate::turso::sql_types::Timestamptz => Text);
 // BOOLEAN type's physical shape.
 has_sql_type!(sql_types::Bool      => Integer);
 
+/// Turso writes the value of a `LIMIT` inside a subselect into the SQL text
+/// instead of binding it. See [`SqlDialect::SubselectLimitSyntax`].
+///
+/// Turso's planner does not merely dislike a placeholder there — it deletes
+/// it. A subquery compared as a scalar (`x = (SELECT …)`, and the row-value
+/// form of the same) has its `LIMIT` expression *replaced* with the literal
+/// `1` unless it already parses as a literal `0` or `1`
+/// (`core/translate/subquery.rs`), because at most one row can be wanted.
+/// A `LIMIT ?` does not parse as a number, so it is the expression that gets
+/// replaced, and the placeholder it contained is never compiled into the
+/// program. Turso's parameter table is built while emitting, so that slot is
+/// never registered: the statement ends up knowing about one placeholder
+/// fewer than the text spells, while diesel — which counts by walking the
+/// AST — sends a value for every one.
+///
+/// What that costs depends only on where the dropped placeholder sat. If a
+/// later one exists, the bind lands in a slot that is real, the values after
+/// it are shifted by nothing (indices come from the parse, not the emit), and
+/// the only casualty is the limit itself, which Turso replaced with 1 anyway
+/// — so `.single_value()` looked like it worked. If it was the *last*
+/// placeholder in the statement, there is no slot at all and the bind fails
+/// with `bind index N is out of bounds`. Same defect, and whether it shows
+/// depends on the order the query happened to render its filters in.
+///
+/// Writing the value into the text removes the placeholder that Turso was
+/// going to discard, so the two counts agree again by construction, and the
+/// limit means what it says even where Turso wouldn't have rewritten it —
+/// inside an `IN (SELECT … LIMIT 5)`, say, which is not a scalar subquery.
+///
+/// This is deliberately not what a top-level `LIMIT` does. Binding is what
+/// lets one paged query serve every page from a single compiled program;
+/// making every limit a literal would mint a statement per page. A subselect
+/// limit is not that: it is `.single_value()`'s `1` nearly every time.
+#[derive(Debug, Clone, Copy)]
+pub struct LiteralSubselectLimit;
+
+/// Turso's `ON CONFLICT` support, which is SQLite's.
 #[derive(Debug, Clone, Copy)]
 pub struct TursoOnConflictClause;
 
