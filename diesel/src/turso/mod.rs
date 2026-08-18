@@ -2,11 +2,11 @@
 //!
 //! Turso speaks SQLite's SQL but is a different engine with a different
 //! client, so it gets its own [`Backend`](crate::backend::Backend) rather
-//! than riding on [`Sqlite`](crate::sqlite::Sqlite): the raw value type is
+//! than riding on diesel's `Sqlite`: the raw value type is
 //! `turso::Value` rather than a byte buffer, the bind collector hands the
 //! driver a `Vec<turso::Value>` rather than a statement to bind onto, and
 //! the SQL differs in the one place noted on
-//! [`Turso`](backend::Turso)'s `SqlDialect` impl. Everything else about the
+//! [`Turso`]'s `SqlDialect` impl. Everything else about the
 //! dialect mirrors SQLite's.
 //!
 //! # Why the connection is not here
