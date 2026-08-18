@@ -38,10 +38,11 @@
 //!    `slackdb`'s) asserts each migration's `CREATE TYPE` text agrees with
 //!    that emission, member by member. Compile-time-ish: a build failure
 //!    with a diff.
-//! 3. [`probe::verify_declared_types`] asks the *database* at connection
-//!    establish, through Turso's `sqlite_turso_types` vtab, and refuses to
-//!    open a file whose stored declarations disagree. This is the only
-//!    layer that can catch a file an older binary wrote.
+//! 3. `diesel_async::turso::probe::verify_declared_types` asks the
+//!    *database* at connection establish, through Turso's
+//!    `sqlite_turso_types` vtab, and refuses to open a file whose stored
+//!    declarations disagree. This is the only layer that can catch a file
+//!    an older binary wrote.
 //! 4. `turbo-diesel`'s `wire_differential` test pins our encoder against
 //!    Turso's own `union_value` / `struct_pack`, byte for byte. Migrations
 //!    write rows with those functions and the app then looks them up by
