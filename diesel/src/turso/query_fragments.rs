@@ -13,14 +13,14 @@ use crate::expression::bound::Bound;
 use crate::expression::{AppearsOnTable, Expression};
 use crate::insertable::{ColumnInsertValue, DefaultableColumnInsertValue, InsertValues};
 use crate::query_builder::from_clause::NoFromClause;
+use crate::query_builder::insert_statement::{InsertOrIgnore, Replace};
 use crate::query_builder::limit_clause::{LimitClause, NoLimitClause};
 use crate::query_builder::limit_offset_clause::{BoxedLimitOffsetClause, LimitOffsetClause};
 use crate::query_builder::offset_clause::{NoOffsetClause, OffsetClause};
-use crate::query_builder::select_statement::SelectStatement;
 use crate::query_builder::select_statement::boxed::{BoxedQueryHelper, BoxedSelectStatement};
+use crate::query_builder::select_statement::SelectStatement;
 use crate::query_builder::upsert::into_conflict_clause::OnConflictSelectWrapper;
 use crate::query_builder::where_clause::{BoxedWhereClause, WhereClause};
-use crate::query_builder::insert_statement::{InsertOrIgnore, Replace};
 use crate::query_builder::{AstPass, IntoBoxedClause, QueryFragment};
 use crate::{Column, QueryResult};
 

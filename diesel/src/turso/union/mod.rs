@@ -85,16 +85,15 @@ pub mod field_type;
 pub mod schema;
 pub mod wire;
 
-pub use codec::{TaggedUnion, decode_from_blob, encode_for_bind};
+pub use codec::{decode_from_blob, encode_for_bind, TaggedUnion};
 pub use ddl::{
-    DeclarationDrift, TypeDecl, TypeKind, check_declarations, index_by_name,
-    parse_create_types,
+    check_declarations, index_by_name, parse_create_types, DeclarationDrift, TypeDecl, TypeKind,
 };
 pub use expr::{
     Composite, CompositeExpressionMethods, CompositeField, CompositeShape, CompositeSqlType,
     Extract, GetField, NullableComposite, NullableOf, UnionExpressionMethods, UnionSqlType,
     UnionTag, UnionVariant,
 };
-pub use field_type::{TursoFieldType, ddl_type_name, decode_field, encode_field};
+pub use field_type::{ddl_type_name, decode_field, encode_field, TursoFieldType};
 pub use schema::{DecodeError, EncodeResult, UnionSchema, UnionStructPayload, ValueKind};
-pub use wire::{WireError, decode_record, encode_record};
+pub use wire::{decode_record, encode_record, WireError};
