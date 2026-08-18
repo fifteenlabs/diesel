@@ -38,6 +38,10 @@
 //! * `#[union(tag = "…")]` on a variant — its tag name in the DDL and in
 //!   `union_extract(col, '…')`. Defaults to `snake_case(VariantIdent)`.
 //!   The *wire* tag is the declaration index either way; this is the name.
+//!   Whatever it is, the generated code spells it the way Turso will store
+//!   it rather than the way it was written here — see [`stored_name`], the
+//!   short version being that a tag Turso has to quote is *named* with the
+//!   quotes from then on.
 //! * `#[union(struct_type = "…")]` on a struct or boxed variant — the name
 //!   of its `CREATE TYPE … AS STRUCT(…)`. Defaults to `<tag>_t`. Two
 //!   variants may name the same type, in which case one statement is
@@ -104,6 +108,64 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens};
 use syn::{Attribute, Data, DataStruct, DeriveInput, Fields, Ident, LitStr, Type, Variant};
 
+/// A UNION variant tag or STRUCT field name as **Turso stores it**, which is
+/// not always as it was written.
+///
+/// # The name is not kept verbatim
+///
+/// `CREATE TYPE k AS UNION(first INT, second INT)` is accepted, and then
+/// Turso re-renders the statement from its own AST before persisting it
+/// (`Insn::ParseSchema` re-reads the canonical text, so the registry is
+/// populated from the re-render, not from what was typed). The re-render
+/// quotes any member name that would not lex back as a plain identifier —
+/// and `first` is a keyword, so what lands in `sqlite_turso_types` is
+/// `AS UNION("first" INT, second INT)`. The quotes then *are part of the
+/// variant's name*: `union_tag(col)` hands back the seven-character string
+/// `"first"`, and `union_extract(col, 'first')` is not a NULL but a hard
+/// `Parse error: cannot resolve union variant 'first'`.
+///
+/// Nothing about the whole-value path notices, because `ToSql` binds the
+/// wire blob and never names the tag. So a union with a keyword variant
+/// inserts, selects and round-trips perfectly, and fails the first time
+/// anyone asks which variant a row holds. That is the failure this function
+/// exists to prevent, and it is reachable by default: the derive snake_cases
+/// the variant ident, so `First`, `Last`, `Next`, `Key`, `Order` and every
+/// other keyword land on it without anyone writing a string.
+///
+/// # The rule
+///
+/// Verbatim from `turso::core::util::quote_identifier`, which is what the
+/// re-render calls: quote when the name is empty, starts with an ASCII
+/// digit, contains anything outside `[A-Za-z0-9_]`, or is a quotable
+/// keyword — escaping an embedded `"` by doubling it. Case is *not*
+/// touched (unlike the type's own name, which Turso lowercases), and
+/// resolution is case-insensitive, so `Telegram` stays `Telegram`.
+///
+/// Two consequences worth stating, because both look like the opposite:
+///
+/// * A name written quoted in the DDL that does **not** need quoting comes
+///   back bare — `UNION("telegram" INT)` stores `telegram`. The stored
+///   spelling is a function of the name, never of how it was written.
+/// * `INT`, `TEXT`, `BLOB`, `REAL` and friends lex as `TK_TYPE`, not as
+///   keywords, so a variant called `text` is stored bare. The keyword list
+///   is the lexer's, which is why this asks the lexer.
+///
+/// Applied at expansion time rather than in `walk_ast`, so `TAG_NAME` is a
+/// string literal that `Extract` can push as-is and a caller can compare
+/// `union_tag(col)` against — one spelling, no allocation per query, and no
+/// second place for the rule to live.
+fn stored_name(name: &str) -> String {
+    let needs_quoting = name.is_empty()
+        || name.as_bytes()[0].is_ascii_digit()
+        || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        || turso_parser::lexer::is_quotable_keyword(name.as_bytes());
+    if needs_quoting {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    } else {
+        name.to_string()
+    }
+}
+
 pub(crate) fn expand_union_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let enum_ident = &input.ident;
 
@@ -136,12 +198,15 @@ pub(crate) fn expand_union_schema(input: &DeriveInput) -> syn::Result<TokenStrea
         ));
     }
 
-    let variant_names: Vec<_> = variants.iter().map(|v| v.tag.as_str()).collect();
+    // Every name below is the *stored* spelling — see [`stored_name`]. The
+    // Rust-side spelling survives only where it names a Rust item (the
+    // variant's module), because that is the one place Turso never sees.
+    let variant_names: Vec<String> = variants.iter().map(|v| stored_name(&v.tag)).collect();
     let variant_field_lits: Vec<TokenStream2> = variants
         .iter()
         .map(|v| match &v.shape {
             VariantShape::Struct { fields } => {
-                let names: Vec<String> = fields.iter().map(|f| f.ident.to_string()).collect();
+                let names: Vec<String> = fields.iter().map(|f| f.stored_name()).collect();
                 quote! { &[ #(#names),* ] }
             }
             VariantShape::Scalar { .. } => quote! { &[] },
@@ -267,6 +332,11 @@ fn emit_identifier_module(
 
     for (index, variant) in variants.iter().enumerate() {
         let tag = &variant.tag;
+        // The tag as SQL sees it, which is the tag as written unless Turso
+        // will requote it — see [`stored_name`]. Everything the generated
+        // code hands to the database uses this; only the module ident below
+        // uses the Rust spelling, because it names a Rust item.
+        let sql_tag = stored_name(tag);
         let tag_ident = syn::parse_str::<Ident>(tag).map_err(|_| {
             syn::Error::new_spanned(
                 &variant.ident,
@@ -305,6 +375,7 @@ fn emit_identifier_module(
                             ),
                         ));
                     }
+                    let sql_name = field.stored_name();
                     let alias = format_ident!("__sql_{}_{}", tag_ident, field_ident);
                     let st = field.sql_type_tokens();
                     aliases.push(quote! {
@@ -312,7 +383,7 @@ fn emit_identifier_module(
                         pub type #alias = ::diesel::turso::union::NullableOf<#st>;
                     });
                     let doc = format!(
-                        "`struct_extract(union_extract(<col>, '{tag}'), '{name}')`, \
+                        "`struct_extract(union_extract(<col>, '{sql_tag}'), '{sql_name}')`, \
                          as an expression."
                     );
                     field_types.push(quote! {
@@ -323,12 +394,12 @@ fn emit_identifier_module(
                         impl ::diesel::turso::union::CompositeField for #field_ident {
                             type Shape = fields;
                             type SqlType = super::#alias;
-                            const NAME: &'static str = #name;
+                            const NAME: &'static str = #sql_name;
                             const INDEX: usize = #position;
                         }
                     });
                 }
-                let names: Vec<String> = fields.iter().map(|f| f.ident.to_string()).collect();
+                let names: Vec<String> = fields.iter().map(|f| f.stored_name()).collect();
                 let fields_doc = format!(
                     "The field set of `{}`, the STRUCT behind the `{tag}` variant. \
                      Fields are typed against it, so a field of some other variant \
@@ -369,19 +440,23 @@ fn emit_identifier_module(
         };
 
         let variant_doc = format!(
-            "`union_extract(<col>, '{tag}')` — the `{}` variant's payload, \
+            "`union_extract(<col>, '{sql_tag}')` — the `{}` variant's payload, \
              NULL for a row holding any other variant.",
             variant.ident,
         );
         variant_mods.push(quote! {
             #[doc = #variant_doc]
             pub mod #tag_ident {
-                /// This variant's tag, as it is spelled in the DDL and in
-                /// `union_tag(col)` — the same string `variant` renders,
-                /// and the same value as `UnionVariant::TAG_NAME`, repeated
+                /// This variant's tag as the database holds it: the string
+                /// `union_tag(col)` returns, the literal `union_extract`
+                /// resolves against, and the member name in the DDL — one
+                /// spelling for all three, which for a tag Turso requotes
+                /// (a keyword, say) carries the quotes.
+                ///
+                /// The same value as `UnionVariant::TAG_NAME`, repeated
                 /// here as a plain const so a `union_tag(col).eq(…)`
                 /// comparison needs no trait import.
-                pub const TAG_NAME: &str = #tag;
+                pub const TAG_NAME: &str = #sql_tag;
 
                 #[doc = #variant_doc]
                 #[derive(Debug, Clone, Copy, Default, ::diesel::query_builder::QueryId)]
@@ -391,7 +466,7 @@ fn emit_identifier_module(
                     type Union = super::__Union;
                     type Payload = #payload;
                     const TAG: u8 = #tag_index;
-                    const TAG_NAME: &'static str = #tag;
+                    const TAG_NAME: &'static str = #sql_tag;
                 }
 
                 #body
@@ -445,7 +520,7 @@ fn emit_payload_identifier_module(
     let mut field_types = Vec::new();
     for (position, field) in fields.iter().enumerate() {
         let field_ident = &field.ident;
-        let name = field_ident.to_string();
+        let name = field.stored_name();
         let alias = format_ident!("__sql_{}", field_ident);
         let st = field.sql_type_tokens();
         aliases.push(quote! {
@@ -503,6 +578,13 @@ struct ParsedField {
 }
 
 impl ParsedField {
+    /// This field's name as Turso stores it in the STRUCT declaration, and
+    /// therefore as `struct_extract(…, '<name>')` has to spell it. Same rule
+    /// and same hazard as a variant tag — see [`stored_name`].
+    fn stored_name(&self) -> String {
+        stored_name(&self.ident.to_string())
+    }
+
     /// The SQL type this field encodes through — the override if there is
     /// one, otherwise the Rust type's declared default.
     fn sql_type_tokens(&self) -> TokenStream2 {
@@ -772,7 +854,7 @@ impl ParsedVariant {
             VariantShape::Struct { fields } => {
                 let field_frags = fields.iter().map(|f| {
                     let st = f.sql_type_tokens();
-                    let name = f.ident.to_string();
+                    let name = f.stored_name();
                     quote! {
                         ::std::format!(
                             "{} {}",
@@ -812,8 +894,14 @@ impl ParsedVariant {
     }
 
     /// This variant's entry in the `AS UNION(…)` list.
+    ///
+    /// The tag goes in already quoted where Turso would quote it, so that
+    /// the text this emits and the text Turso keeps are the same text —
+    /// which is what lets `check_declarations` compare them member by
+    /// member, and what makes a migration written the other way a reported
+    /// drift rather than a silent one.
     fn emit_union_entry(&self) -> TokenStream2 {
-        let tag = &self.tag;
+        let tag = stored_name(&self.tag);
         match &self.shape {
             VariantShape::Scalar { field } => {
                 let st = field.sql_type_tokens();
@@ -991,7 +1079,7 @@ pub(crate) fn expand_struct_payload(input: &DeriveInput) -> syn::Result<TokenStr
         .map(ParsedField::from_syn)
         .collect::<syn::Result<_>>()?;
 
-    let field_name_lits: Vec<String> = fields.iter().map(|f| f.ident.to_string()).collect();
+    let field_name_lits: Vec<String> = fields.iter().map(|f| f.stored_name()).collect();
     let field_count = fields.len();
     let struct_name_lit = struct_ident.to_string();
 
@@ -1027,7 +1115,7 @@ pub(crate) fn expand_struct_payload(input: &DeriveInput) -> syn::Result<TokenStr
 
     let sql_rows = fields.iter().map(|f| {
         let st = f.sql_type_tokens();
-        let name = f.ident.to_string();
+        let name = f.stored_name();
         quote! { (#name, ::diesel::turso::union::ddl_type_name::<#st>()) }
     });
 
@@ -1077,4 +1165,49 @@ pub(crate) fn expand_struct_payload(input: &DeriveInput) -> syn::Result<TokenStr
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stored_name;
+
+    /// Every case here was read off a real `:memory:` Turso: create the
+    /// type, then ask `sqlite_turso_types` what it kept and `union_tag`
+    /// what it answers. The rule is stated in [`stored_name`]; this is the
+    /// evidence for it, so that a Turso bump which changes the rule fails
+    /// here rather than in whichever query happens to name a variant.
+    #[test]
+    fn a_name_is_stored_as_turso_would_requote_it() {
+        // The overwhelming case, and the one that must not move: an
+        // ordinary identifier is stored exactly as written, whatever its
+        // case. Every union tag in the app is one of these.
+        for plain in ["telegram", "Telegram", "TELEGRAM", "naive", "_x", "x1"] {
+            assert_eq!(stored_name(plain), plain);
+        }
+
+        // Keywords are quoted, and case does not save them.
+        assert_eq!(stored_name("first"), r#""first""#);
+        assert_eq!(stored_name("FIRST"), r#""FIRST""#);
+        assert_eq!(stored_name("key"), r#""key""#);
+        assert_eq!(stored_name("end"), r#""end""#);
+        assert_eq!(stored_name("window"), r#""window""#);
+
+        // Storage-class words lex as `TK_TYPE`, not as keywords, so they
+        // are *not* quoted — which is why this asks the lexer rather than
+        // matching a hand-written list of "SQL words".
+        for type_word in ["text", "int", "blob", "real", "any", "value"] {
+            assert_eq!(stored_name(type_word), type_word);
+        }
+
+        // Quoted for reasons other than keyword-ness. A tag has to be a
+        // Rust identifier, so only the non-ASCII case is reachable through
+        // the derive; the rest are here because the rule has them and a
+        // hand-written `UnionSchema` could hit them.
+        assert_eq!(stored_name("naïve"), "\"naïve\"");
+        assert_eq!(stored_name("a-b"), r#""a-b""#);
+        assert_eq!(stored_name("has space"), r#""has space""#);
+        assert_eq!(stored_name("1abc"), r#""1abc""#);
+        assert_eq!(stored_name(""), r#""""#);
+        assert_eq!(stored_name("we\"ird"), r#""we""ird""#);
+    }
 }

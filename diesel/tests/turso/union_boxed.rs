@@ -895,17 +895,10 @@ async fn an_aggregate_can_wrap_an_extracted_field() -> Result<()> {
 /// Two things are being pinned. First that the node renders into a
 /// `GROUP BY` position at all — it is a `QueryFragment` like any other, but
 /// nothing else in the suite puts one anywhere except a `SELECT`, a
-/// `WHERE` or an `ORDER BY`. Second, the shape of what may be selected
-/// alongside: because diesel decides "is this expression functionally
-/// determined by the group" through `IsContainedInGroupBy`, and that trait
-/// is implemented by `table!` for columns only, a query grouped by
-/// `union_tag(col)` may select aggregates but **not** the tag itself.
-/// Writing `.select((col.union_tag(), count_star()))` here is a compile
-/// error — `UnionTag<k>: IsContainedInGroupBy<k>` is not satisfied, so
-/// `k: ValidGrouping<UnionTag<k>>` does not hold — which is a real
-/// limitation of these nodes rather than a fact about SQL, since the same
-/// query is legal for Turso. See `grouping_by_the_column_admits_the_tag`
-/// for the spelling that does give the tag back.
+/// `WHERE` or an `ORDER BY`. Second that a query grouped this way can be
+/// loaded as pure aggregates, which is the narrower half of what
+/// `IsContainedInGroupBy` decides; selecting the tag beside them is
+/// `group_by_union_tag_selects_the_tag` below.
 #[tokio::test(flavor = "current_thread")]
 async fn group_by_union_tag_counts_the_variants() -> Result<()> {
     use diesel::dsl::count_star;
@@ -956,6 +949,84 @@ async fn group_by_union_tag_counts_the_variants() -> Result<()> {
     // declaration order — deliberately not relied on beyond the counts.
     let counts: Vec<i64> = query.load(&mut conn).await?;
     assert_eq!(counts, vec![2, 3]);
+
+    Ok(())
+}
+
+/// `GROUP BY union_tag(col)` selecting the tag it grouped by — the query
+/// anyone writing the previous one actually wanted.
+///
+/// Diesel decides "may this expression appear beside aggregates" through
+/// `IsContainedInGroupBy`, which `table!` implements for columns and which
+/// nothing implemented for these nodes: `k: ValidGrouping<UnionTag<k>>`
+/// wants `UnionTag<k>: IsContainedInGroupBy<k>`, and without it
+/// `.select((k.union_tag(), count_star()))` was a compile error while
+/// `.select(count_star())` over the same `GROUP BY` was fine. That was a
+/// gap in the nodes, not a fact about SQL — Turso runs this query — so
+/// `Extract`, `GetField` and `UnionTag` each forward the question to their
+/// operand, and a group over any of them admits the others.
+///
+/// The `ORDER BY` is deliberately the grouped expression rather than an
+/// ordinal, so the same verdict has to hold in a third clause.
+#[tokio::test(flavor = "current_thread")]
+async fn group_by_union_tag_selects_the_tag() -> Result<()> {
+    use boxed_key::fat;
+    use diesel::dsl::count_star;
+
+    let mut conn = setup().await?;
+    diesel::insert_into(boxed_rows::table)
+        .values(vec![
+            (
+                boxed_rows::id.eq(1i64),
+                boxed_rows::k.eq(BoxedKey::Fat(Box::new(sample_payload()))),
+            ),
+            (
+                boxed_rows::id.eq(2i64),
+                boxed_rows::k.eq(BoxedKey::Legacy(1)),
+            ),
+            (
+                boxed_rows::id.eq(3i64),
+                boxed_rows::k.eq(BoxedKey::Legacy(2)),
+            ),
+        ])
+        .execute(&mut conn)
+        .await?;
+
+    let query = boxed_rows::table
+        .group_by(boxed_rows::k.union_tag())
+        .select((boxed_rows::k.union_tag(), count_star()))
+        .order(boxed_rows::k.union_tag().asc());
+    let sql = diesel::debug_query::<diesel::turso::Turso, _>(&query).to_string();
+    assert!(
+        sql.contains(r#"GROUP BY union_tag("boxed_rows"."k")"#),
+        "{sql}"
+    );
+
+    let rows: Vec<(String, i64)> = query.load(&mut conn).await?;
+    assert_eq!(
+        rows,
+        vec![("fat".to_string(), 1), ("legacy".to_string(), 2)]
+    );
+
+    // The same for a group over an `Extract`: the extracted payload is
+    // selectable beside the aggregate, and so is anything else over the
+    // same column.
+    let query = boxed_rows::table
+        .group_by(boxed_rows::k.extract(fat::variant))
+        .select((
+            boxed_rows::k
+                .extract(fat::variant)
+                .field(fat_payload::thread),
+            count_star(),
+        ))
+        .order(boxed_rows::k.union_tag().asc());
+    let sql = diesel::debug_query::<diesel::turso::Turso, _>(&query).to_string();
+    assert!(
+        sql.contains(r#"GROUP BY union_extract("boxed_rows"."k", 'fat')"#),
+        "{sql}"
+    );
+    let rows: Vec<(Option<String>, i64)> = query.load(&mut conn).await?;
+    assert_eq!(rows, vec![(Some("thread-1".to_string()), 1), (None, 2)]);
 
     Ok(())
 }
@@ -1307,6 +1378,40 @@ diesel::table! {
     }
 }
 
+/// A union whose struct variant has a field named for a SQL keyword. `end`
+/// is the Rust field name and nothing more was written; `span` and `plain`
+/// are ordinary names, so the only thing under test here is the field.
+#[derive(
+    Debug,
+    PartialEq,
+    Clone,
+    FromSqlRow,
+    AsExpression,
+    diesel::query_builder::QueryId,
+    DeriveUnionSchema,
+)]
+#[diesel(sql_type = TaggedUnion<KeywordFields>)]
+#[union(name = "keyword_fields")]
+pub enum KeywordFields {
+    #[union(struct_type = "span_t")]
+    Span {
+        end: i64,
+        note: String,
+    },
+    Plain(i64),
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use diesel::turso::union::TaggedUnion;
+    use super::KeywordFields;
+
+    field_rows(id) {
+        id -> BigInt,
+        k -> TaggedUnion<KeywordFields>,
+    }
+}
+
 /// `push_identifier` doubles an embedded double quote, and nothing in the
 /// suite had ever handed it one.
 ///
@@ -1365,51 +1470,70 @@ async fn identifiers_with_embedded_quotes_are_doubled() -> Result<()> {
     Ok(())
 }
 
-/// The other half of the quoting story, and a live hazard the derive does
-/// nothing about: a variant whose tag is a SQL keyword.
+/// The other half of the quoting story: a variant whose tag is a SQL
+/// keyword, and the spelling that makes it work.
 ///
 /// `CREATE TYPE … AS UNION(first INT, second INT)` is accepted, but Turso
-/// tokenises `first` as a keyword and stores the declaration with the name
-/// re-quoted — `sqlite_turso_types` reads back
-/// `AS UNION("first" INT, second INT)` — and the quotes become *part of the
-/// variant's name*. From then on:
+/// re-renders the statement from its own AST before persisting it and
+/// quotes any member name that would not lex back as a plain identifier.
+/// `first` is a keyword, so `sqlite_turso_types` holds
+/// `AS UNION("first" INT, second INT)` — and the two quote characters are
+/// then *part of the variant's name*. `union_tag(col)` returns the
+/// seven-character string `"first"`; `union_extract(col, 'first')` is not a
+/// NULL but `Parse error: cannot resolve union variant 'first'`;
+/// `union_value('first', …)` fails the same way, so a migration cannot even
+/// write the variant.
 ///
-/// * `union_tag(col)` returns the six-character string `"first"`, quotes
-///   included, so a comparison against the derive's `TAG_NAME` (`first`)
-///   matches nothing;
-/// * `union_extract(col, 'first')` — which is exactly what [`Extract`]
-///   renders — does not return NULL, it fails the statement outright with
-///   `Parse error: cannot resolve union variant 'first' for union_extract`;
-/// * `union_value('first', …)` fails the same way, so a migration cannot
-///   write the variant either.
-///
-/// What still works is the whole-value path, because our `ToSql` binds the
-/// wire blob and never names the tag: inserts, selects and round-trips are
-/// all fine, and the tag ordinal is untouched. So a union with a keyword
+/// None of that shows up on the whole-value path, because our `ToSql` binds
+/// the wire blob and never names the tag: inserts, selects and round-trips
+/// are all fine and the tag ordinal is untouched. So a union with a keyword
 /// variant looks completely healthy right up until somebody writes a tag
 /// test, and then it is a runtime parse error rather than a compile error
-/// or a wrong answer.
+/// or a wrong answer. `First`, `Last`, `Next`, `Key`, `Order`, `Window`,
+/// `End` — the derive snake_cases the ident, so no string has to be typed
+/// for a union to land here.
 ///
-/// This is pinned as a test rather than fixed here because the fix is a
-/// choice, not a detail — the derive could reject keyword tags at
-/// compile time, or `Extract` could push the quoted form — and either way
-/// the first thing needed is an executable statement of what Turso
-/// actually does. `alpha`/`beta` elsewhere in this file are named the way
-/// they are because of this.
+/// The fix is that `#[derive(UnionSchema)]` spells every name the way Turso
+/// will store it, computed at expansion time against Turso's own keyword
+/// list, and emits that one spelling as `TAG_NAME`, as the literal
+/// [`Extract`] pushes, and as the DDL member name. So this test asserts the
+/// three agree with each other *and* with the database:
+///
+/// * the DDL the derive emits is byte-identical to the one Turso kept;
+/// * `union_extract` and a tag test resolve the keyword variant;
+/// * `union_tag(col)` compares equal to `TAG_NAME`.
+///
+/// The `second` variant is carried alongside throughout as the control: a
+/// name needing no quoting renders exactly as it always did, which is the
+/// property the ~60 tag call sites in the app depend on.
 ///
 /// [`Extract`]: diesel::turso::union::Extract
 #[tokio::test(flavor = "current_thread")]
-async fn a_reserved_word_tag_is_stored_quoted_and_breaks_extract() -> Result<()> {
+async fn a_reserved_word_tag_is_named_the_way_turso_stores_it() -> Result<()> {
     use keyworded::{first, second};
 
+    // The two spellings, before anything touches a database: the keyword
+    // carries the quotes, its neighbour does not.
+    assert_eq!(first::TAG_NAME, r#""first""#);
+    assert_eq!(second::TAG_NAME, "second");
+    assert_eq!(Keyworded::variants(), &[r#""first""#, "second"]);
+
     let mut conn = TursoConnection::establish(":memory:").await?;
-    conn.batch_execute(&Keyworded::create_type_sql()).await?;
+    let derived = Keyworded::create_type_sql();
+    assert_eq!(
+        derived,
+        r#"CREATE TYPE keyworded AS UNION("first" INT, second INT)"#,
+    );
+    conn.batch_execute(&derived).await?;
     conn.batch_execute(
         "CREATE TABLE keyword_rows(id INTEGER PRIMARY KEY, k keyworded NOT NULL) STRICT",
     )
     .await?;
 
-    // The DDL applies, and Turso hands it back with the keyword requoted.
+    // Turso hands the declaration back unchanged, which is the point: the
+    // derive already wrote it in the engine's spelling, so there is nothing
+    // for `check_declarations` to report and nothing for a later reader to
+    // be surprised by.
     let mut rows = conn
         .raw()
         .query(
@@ -1426,13 +1550,8 @@ async fn a_reserved_word_tag_is_stored_quoted_and_breaks_extract() -> Result<()>
         turso::Value::Text(s) => s,
         other => anyhow::bail!("declaration came back as {other:?}"),
     };
-    assert_eq!(
-        decl, r#"CREATE TYPE keyworded AS UNION("first" INT, second INT)"#,
-        "turso is expected to requote the keyword variant"
-    );
+    assert_eq!(decl, derived, "turso stores what the derive emitted");
 
-    // The whole-value path is unaffected: writing binds a blob, and the
-    // tag ordinals are what the enum says they are.
     diesel::insert_into(keyword_rows::table)
         .values(vec![
             (
@@ -1453,46 +1572,139 @@ async fn a_reserved_word_tag_is_stored_quoted_and_breaks_extract() -> Result<()>
         .await?;
     assert_eq!(got, vec![Keyworded::First(10), Keyworded::Second(20)]);
 
-    // But the tag the server reports carries the quotes, while the derive's
-    // const does not — so the obvious comparison silently matches nothing.
+    // `union_tag` and `TAG_NAME` now name the same string, so the obvious
+    // comparison selects the row it reads as selecting.
     let tags: Vec<String> = keyword_rows::table
         .order(keyword_rows::id.asc())
         .select(keyword_rows::k.union_tag())
         .load(&mut conn)
         .await?;
     assert_eq!(tags, vec![r#""first""#, "second"]);
-    assert_eq!(first::TAG_NAME, "first");
     let matched: Vec<i64> = keyword_rows::table
         .filter(keyword_rows::k.union_tag().eq(first::TAG_NAME))
         .select(keyword_rows::id)
         .load(&mut conn)
         .await?;
-    assert!(
-        matched.is_empty(),
-        "the quoted stored tag cannot equal the derive's TAG_NAME"
-    );
+    assert_eq!(matched, vec![1]);
 
-    // And the extract is a statement-level failure, not a NULL.
-    let err = keyword_rows::table
+    // `Extract` renders the quoted form, so the statement parses and the
+    // tag test answers rather than failing.
+    let query = keyword_rows::table
         .filter(keyword_rows::k.extract(first::variant).is_not_null())
-        .select(keyword_rows::id)
-        .load::<i64>(&mut conn)
-        .await
-        .expect_err("union_extract cannot resolve a requoted variant name");
-    let msg = err.to_string();
+        .select(keyword_rows::id);
+    let sql = diesel::debug_query::<diesel::turso::Turso, _>(&query).to_string();
     assert!(
-        msg.contains("cannot resolve union variant 'first'"),
-        "unexpected failure for a keyword variant: {msg}"
+        sql.contains(r#"union_extract("keyword_rows"."k", '"first"')"#),
+        "{sql}"
     );
+    let ids: Vec<i64> = query.load(&mut conn).await?;
+    assert_eq!(ids, vec![1]);
 
-    // The non-keyword variant beside it is entirely fine, which is what
-    // makes this easy to miss.
-    let ids: Vec<i64> = keyword_rows::table
-        .filter(keyword_rows::k.extract(second::variant).is_not_null())
-        .select(keyword_rows::id)
+    // And the payload comes back, so the quoting is resolving the variant
+    // rather than merely parsing.
+    let payloads: Vec<Option<i64>> = keyword_rows::table
+        .order(keyword_rows::id.asc())
+        .select(keyword_rows::k.extract(first::variant))
         .load(&mut conn)
         .await?;
-    assert_eq!(ids, vec![2]);
+    assert_eq!(payloads, vec![Some(10), None]);
+
+    // The control: a name that needs no quoting renders with none, exactly
+    // as every tag in the app does.
+    let query = keyword_rows::table
+        .filter(keyword_rows::k.extract(second::variant).is_not_null())
+        .select(keyword_rows::id);
+    let sql = diesel::debug_query::<diesel::turso::Turso, _>(&query).to_string();
+    assert!(
+        sql.contains(r#"union_extract("keyword_rows"."k", 'second')"#),
+        "{sql}"
+    );
+    assert_eq!(query.load::<i64>(&mut conn).await?, vec![2]);
+
+    Ok(())
+}
+
+/// The same rule, one level down: a STRUCT *field* whose name is a keyword.
+///
+/// `struct_extract` resolves a field name against the stored STRUCT
+/// declaration, which Turso re-renders and requotes by the identical rule —
+/// so a field called `end` is stored as `"end"` and
+/// `struct_extract(…, 'end')` fails to resolve. Worth its own test because
+/// the two names arrive from different places in the derive (a variant tag
+/// can be overridden with `#[union(tag = …)]`; a field name is the Rust
+/// ident and nothing else), and because the field case is the one nobody
+/// would think to check — `end`, `order`, `group`, `key`, `index`, `range`
+/// are all perfectly ordinary struct fields.
+#[tokio::test(flavor = "current_thread")]
+async fn a_reserved_word_field_is_named_the_way_turso_stores_it() -> Result<()> {
+    use keyword_fields::span;
+
+    use diesel::turso::union::CompositeField;
+    assert_eq!(<span::end as CompositeField>::NAME, r#""end""#);
+    assert_eq!(<span::note as CompositeField>::NAME, "note");
+
+    let mut conn = TursoConnection::establish(":memory:").await?;
+    let derived = KeywordFields::create_type_sql();
+    assert!(
+        derived.contains(r#"CREATE TYPE span_t AS STRUCT("end" INT, note TEXT)"#),
+        "{derived}"
+    );
+    conn.batch_execute(&derived).await?;
+    conn.batch_execute(
+        "CREATE TABLE field_rows(id INTEGER PRIMARY KEY, k keyword_fields NOT NULL) STRICT",
+    )
+    .await?;
+
+    diesel::insert_into(field_rows::table)
+        .values(vec![
+            (
+                field_rows::id.eq(1i64),
+                field_rows::k.eq(KeywordFields::Span {
+                    end: 42,
+                    note: "done".into(),
+                }),
+            ),
+            (
+                field_rows::id.eq(2i64),
+                field_rows::k.eq(KeywordFields::Plain(7)),
+            ),
+        ])
+        .execute(&mut conn)
+        .await?;
+
+    let query = field_rows::table
+        .order(field_rows::id.asc())
+        .select(field_rows::k.extract(span::variant).field(span::end));
+    let sql = diesel::debug_query::<diesel::turso::Turso, _>(&query).to_string();
+    assert!(
+        sql.contains(r#"struct_extract(union_extract("field_rows"."k", 'span'), '"end"')"#),
+        "{sql}"
+    );
+    let ends: Vec<Option<i64>> = query.load(&mut conn).await?;
+    assert_eq!(ends, vec![Some(42), None]);
+
+    // The neighbouring field is unquoted, and the whole value still decodes.
+    let notes: Vec<Option<String>> = field_rows::table
+        .order(field_rows::id.asc())
+        .select(field_rows::k.extract(span::variant).field(span::note))
+        .load(&mut conn)
+        .await?;
+    assert_eq!(notes, vec![Some("done".to_string()), None]);
+    let got: Vec<KeywordFields> = field_rows::table
+        .order(field_rows::id.asc())
+        .select(field_rows::k)
+        .load(&mut conn)
+        .await?;
+    assert_eq!(
+        got,
+        vec![
+            KeywordFields::Span {
+                end: 42,
+                note: "done".into()
+            },
+            KeywordFields::Plain(7),
+        ]
+    );
 
     Ok(())
 }

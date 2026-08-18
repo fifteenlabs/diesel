@@ -338,10 +338,39 @@ async fn datetime_in_union_variants() -> Result<()> {
         .await?;
     assert_eq!(got, rows);
 
+    // `window` and `end` are both SQL keywords, so the derive spells them
+    // the way Turso will store them — quoted. Nobody chose that here; the
+    // enum says `Window { end, … }` and the names fell out of the idents,
+    // which is exactly how a union acquires a keyword name in practice.
     let sql = TimedEvent::create_type_sql();
-    assert!(sql.contains("CREATE TYPE window_t AS STRUCT(start TEXT, end TEXT, label TEXT);"));
-    assert!(sql.contains(
-        "CREATE TYPE timed_event AS UNION(scheduled TEXT, window window_t, all_day TEXT)"
-    ));
+    assert!(
+        sql.contains(r#"CREATE TYPE window_t AS STRUCT(start TEXT, "end" TEXT, label TEXT);"#),
+        "{sql}"
+    );
+    assert!(
+        sql.contains(
+            r#"CREATE TYPE timed_event AS UNION(scheduled TEXT, "window" window_t, all_day TEXT)"#
+        ),
+        "{sql}"
+    );
+
+    // And both names resolve in a query, which is the half that used to
+    // fail: `union_extract(v, 'window')` was a statement-level parse error
+    // and `struct_extract(…, 'end')` would have been the same.
+    use diesel::turso::union::{CompositeExpressionMethods, UnionExpressionMethods};
+    use timed_event::window;
+    let labels: Vec<Option<String>> = agenda::table
+        .order(agenda::id.asc())
+        .select(agenda::v.extract(window::variant).field(window::label))
+        .load(&mut conn)
+        .await?;
+    assert_eq!(labels, vec![None, Some("standup".to_string()), None]);
+    let tags: Vec<String> = agenda::table
+        .order(agenda::id.asc())
+        .select(agenda::v.union_tag())
+        .load(&mut conn)
+        .await?;
+    assert_eq!(tags, vec!["scheduled", r#""window""#, "all_day"]);
+    assert_eq!(window::TAG_NAME, r#""window""#);
     Ok(())
 }
