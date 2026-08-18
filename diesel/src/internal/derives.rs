@@ -60,11 +60,11 @@ pub mod multiconnection {
     // backends can't mirror the `#[cfg(feature = "__sqlite-shared")]`
     // impls in `sqlite/query_builder/query_fragment_impls.rs`.
     #[doc(hidden)]
+    pub use crate::query_builder::insert_statement::batch_insert::BatchInsert;
+    #[doc(hidden)]
     pub use crate::query_builder::upsert::into_conflict_clause::OnConflictSelectWrapper;
     #[doc(hidden)]
     pub use crate::query_builder::where_clause::{BoxedWhereClause, WhereClause};
-    #[doc(hidden)]
-    pub use crate::query_builder::insert_statement::batch_insert::BatchInsert;
     #[doc(hidden)]
     pub use crate::row::private::PartialRow;
 

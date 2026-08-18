@@ -40,11 +40,7 @@ mod chrono {
     #[derive(FromSqlRow)]
     #[diesel(foreign_derive)]
     #[cfg_attr(
-        any(
-            feature = "postgres_backend",
-            feature = "sqlite",
-            feature = "turso-chrono"
-        ),
+        any(feature = "postgres_backend", feature = "sqlite", feature = "turso"),
         derive(AsExpression)
     )]
     #[cfg_attr(
@@ -53,7 +49,7 @@ mod chrono {
     )]
     #[cfg_attr(feature = "sqlite", diesel(sql_type = crate::sql_types::TimestamptzSqlite))]
     #[cfg_attr(
-        feature = "turso-chrono",
+        feature = "turso",
         diesel(sql_type = crate::turso::sql_types::Timestamptz)
     )]
     struct DateTimeProxy<Tz: TimeZone>(DateTime<Tz>);

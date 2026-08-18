@@ -17,7 +17,7 @@ use crate::sql_types::Binary;
 use uuid::Uuid;
 
 use crate::turso::backend::Turso;
-use crate::turso::value::{TursoValue, mismatch};
+use crate::turso::value::{mismatch, TursoValue};
 
 pub(super) mod sql_types {
     //! `Uuid` is a readability alias for `Binary` — UUIDs travel as raw

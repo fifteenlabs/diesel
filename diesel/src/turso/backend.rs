@@ -7,7 +7,7 @@
 //! directly rather than going through a byte buffer).
 
 use crate::backend::{
-    Backend, DieselReserveSpecialization, SqlDialect, TrustedBackend, sql_dialect,
+    sql_dialect, Backend, DieselReserveSpecialization, SqlDialect, TrustedBackend,
 };
 use crate::query_builder::QueryBuilder;
 use crate::sql_types::{self, HasSqlType, TypeMetadata};

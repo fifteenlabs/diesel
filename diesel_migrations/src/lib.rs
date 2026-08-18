@@ -33,11 +33,15 @@
 //! and executed with code, for example right after establishing a database connection.
 //! For more information, consult the [`embed_migrations!`] macro.
 
+#[cfg(feature = "async")]
+mod async_harness;
 mod embedded_migrations;
 mod errors;
 mod file_based_migrations;
 mod migration_harness;
 
+#[cfg(feature = "async")]
+pub use crate::async_harness::AsyncMigrationHarness;
 pub use crate::embedded_migrations::EmbeddedMigrations;
 pub use crate::file_based_migrations::FileBasedMigrations;
 pub use crate::migration_harness::{HarnessWithOutput, MigrationHarness};

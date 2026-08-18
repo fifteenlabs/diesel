@@ -10,6 +10,20 @@ pub(crate) mod statement_cache;
 pub mod statement_cache;
 mod transaction_manager;
 
+// The async connection traits. They are here rather than under an `async`
+// module because they are the same concept as their neighbours — a
+// connection — and the two names that had to change on the way in
+// (`TransactionManager`, `AnsiTransactionManager`) changed precisely
+// because the sync traits of those names are declared in this file.
+#[cfg(feature = "async")]
+mod async_connection;
+#[cfg(feature = "async")]
+mod async_deref_connection;
+#[cfg(any(feature = "async-postgres", feature = "async-mysql"))]
+pub(crate) mod async_stmt_cache;
+#[cfg(feature = "async")]
+mod async_transaction_manager;
+
 use crate::backend::Backend;
 use crate::expression::QueryMetadata;
 use crate::query_builder::{Query, QueryFragment, QueryId};
@@ -18,11 +32,16 @@ use crate::sql_types::TypeMetadata;
 use std::fmt::Debug;
 
 #[doc(inline)]
+#[cfg(feature = "async")]
+pub use self::async_connection::{AsyncConnection, AsyncConnectionCore, SimpleAsyncConnection};
+#[cfg(feature = "async")]
+pub use self::async_transaction_manager::{AnsiAsyncTransactionManager, AsyncTransactionManager};
+#[doc(inline)]
 pub use self::instrumentation::{
     get_default_instrumentation, set_default_instrumentation, DebugQuery, Instrumentation,
     InstrumentationEvent,
 };
-#[doc(inline)]
+
 pub use self::transaction_manager::{
     AnsiTransactionManager, InTransactionStatus, TransactionDepthChange, TransactionManager,
     TransactionManagerStatus, ValidTransactionManagerStatus,

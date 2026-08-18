@@ -45,13 +45,53 @@ r2d2 = { version = ">= 0.8.2, < 0.9.0", optional = true }
 itoa = { version = "1.0.0", optional = true }
 time = { version = "0.3.9", optional = true, features = ["macros"] }
 downcast-rs = "2.0.1"
-# The Turso backend's raw value *is* a `turso::Value`, so the backend
-# module names the driver's type even though it never opens a connection —
-# that lives in `diesel-async`. Optional, and off by default.
+# The Turso backend's raw value *is* a `turso::Value` and its connection is
+# the driver's own, so the backend names the driver throughout. Optional,
+# and off by default.
 turso = { workspace = true, optional = true }
-# The UNION wire codec and the schema derive both report structured
-# failures; `thiserror` is how they spell the `Display`/`Error` pair.
+# The UNION wire codec, the schema derive and the connection all report
+# structured failures; `thiserror` is how they spell the `Display`/`Error`
+# pair.
 thiserror = { version = "2", optional = true }
+# The statement cache's `establish`/`admit` decisions are traced, and the
+# cap warning is the only signal that a query is minting SQL texts.
+tracing = { version = "0.1", optional = true }
+# Keys the statement cache. Not a general-purpose hasher choice: the cache
+# is consulted on every statement execution and a collision there is
+# harmless by construction (Turso keys its own cache by the SQL text, so a
+# wrong answer changes whether a statement is cached, never which program
+# runs), which is exactly the trade FxHash is for. See
+# `turso::connection::hash_of` for the measurement, and for the one place
+# in that file this hasher is deliberately *not* used.
+rustc-hash = { version = "2", optional = true }
+
+# --- the async half, formerly the `diesel-async` crate --------------------
+# Unconditional there, optional here: a sync-only build of diesel must not
+# compile the futures stack. Every async backend feature turns on `async`,
+# which turns these on.
+futures-core = { version = "0.3.17", optional = true }
+futures-util = { version = "0.3.17", default-features = false, features = [
+  "alloc",
+  "sink",
+], optional = true }
+futures-channel = { version = "0.3.17", default-features = false, features = [
+  "std",
+  "sink",
+], optional = true }
+scoped-futures = { version = "0.1", features = ["std"], optional = true }
+pin-project-lite = { version = "0.2.17", optional = true }
+tokio = { version = "1.26", optional = true }
+tokio-postgres = { version = "0.7.10", optional = true }
+mysql_async = { version = "0.36.0", optional = true, default-features = false, features = [
+  "minimal-rust",
+] }
+mysql_common = { version = "0.35.3", optional = true, default-features = false }
+bb8 = { version = "0.9", optional = true }
+async-trait = { version = "0.1.66", optional = true }
+deadpool = { version = "0.13", optional = true, default-features = false, features = [
+  "managed",
+] }
+mobc = { version = ">=0.7,<0.10", optional = true }
 
 [dependencies.diesel_derives]
 version = "~2.3.0"
@@ -75,6 +115,29 @@ ipnetwork = ">=0.12.2, <0.22.0"
 quickcheck = "1.0.3"
 tempfile = "3.10.1"
 diesel_test_helper = { path = "../diesel_test_helper" }
+tokio = { version = "1.12.0", features = ["rt", "macros", "rt-multi-thread", "time", "sync"] }
+assert_matches = "1.0.1"
+futures-util = { version = "0.3.17", features = ["async-await-macro"] }
+anyhow = "1"
+scoped-futures = "0.1"
+uuid = { version = "1", features = ["v4"] }
+serde_json = "1"
+chrono = "0.4"
+# A dev-dependency on a crate that depends on this one. Cargo allows the
+# cycle for dev-dependencies specifically, and it is what lets the Turso
+# migration test live beside the rest of the Turso suite rather than in a
+# crate of its own.
+diesel_migrations = { path = "../diesel_migrations", features = ["async"] }
+
+# The Turso backend's acceptance suite. `chrono` and `gpui` are here rather
+# than in `required-features`' spirit of "the feature under test" because
+# two of the modules cover Turso's handling of those types; `turso` alone
+# builds and runs everything else.
+[[test]]
+name = "turso"
+path = "tests/turso/main.rs"
+harness = true
+required-features = ["turso", "chrono", "gpui"]
 
 [features]
 default = ["with-deprecated", "32-column-tables"]
@@ -96,13 +159,70 @@ numeric = ["dep:num-bigint", "dep:bigdecimal", "dep:num-traits", "dep:num-intege
 postgres_backend = ["diesel_derives/postgres", "dep:bitflags", "dep:byteorder", "dep:itoa"]
 mysql_backend = ["diesel_derives/mysql", "dep:byteorder"]
 returning_clauses_for_sqlite_3_35 = ["sqlite"]
-# The Turso backend. `serde_json` is how a string-list struct field is
-# stored; `uuid` is the `sql_types::Uuid` alias and its codec.
-turso = ["dep:turso", "dep:thiserror", "serde_json", "uuid", "diesel_derives/turso"]
-# `chrono` for Turso. Unlike the out-of-tree arrangement this replaced, it
-# does not drag in `postgres_backend`: `Timestamptz` is a Turso-local SQL
-# type here, the way `TimestamptzSqlite` is SQLite's.
-turso-chrono = ["turso", "chrono"]
+# The Turso backend — the whole of it, from the SQL dialect to the
+# connection. One switch, which is the requirement this feature exists to
+# meet: while the backend was split over `diesel` and `diesel-async` a
+# consumer named `turso` twice and could compile half of it, and there were
+# `turso-chrono` and `turso-gpui` besides. `chrono` and `gpui` are ordinary
+# diesel type-integration features now, so `turso` + `chrono` gives what
+# `turso-chrono` did and nobody has to know the compound name exists.
+#
+# `serde_json` is how a string-list struct field is stored; `uuid` is the
+# `sql_types::Uuid` alias and its codec. It does *not* drag in
+# `postgres_backend`: `Timestamptz` is a Turso-local SQL type here, the way
+# `TimestamptzSqlite` is SQLite's.
+turso = [
+    "async",
+    "dep:turso",
+    "dep:thiserror",
+    "dep:tracing",
+    "dep:rustc-hash",
+    "serde_json",
+    "uuid",
+    "diesel_derives/turso",
+]
+
+# --- the async half ------------------------------------------------------
+# `async` carries the futures stack and the connection traits and nothing
+# backend-specific. It is not meant to be named directly; every async
+# backend feature below turns it on.
+async = [
+    "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+    "dep:futures-core",
+    "dep:futures-util",
+    "dep:scoped-futures",
+    "dep:pin-project-lite",
+]
+# The async connections that came with `diesel-async`. They cannot be
+# called `postgres`/`mysql`/`sqlite`: those names are taken by the sync
+# backends in this crate and mean something else.
+async-postgres = ["async", "postgres_backend", "dep:tokio-postgres", "tokio", "tokio/rt"]
+async-mysql = [
+    "async",
+    "mysql_backend",
+    "dep:mysql_async",
+    "dep:mysql_common",
+    "dep:futures-channel",
+    "tokio",
+]
+async-sqlite = ["sqlite", "sync-connection-wrapper"]
+sync-connection-wrapper = ["async", "tokio", "tokio/rt-multi-thread"]
+async-connection-wrapper = ["async", "tokio", "tokio/net", "tokio/rt"]
+# `async-pool` rather than `pool`, and separate from this crate's `r2d2`,
+# because `r2d2` here is the *sync* pool and must not drag the futures
+# stack in behind it.
+async-pool = ["async"]
+# An explicit feature rather than the `dep:tokio` shorthand, because
+# `sync_connection_wrapper` reads `cfg(feature = "tokio")` to decide whether
+# `SyncConnectionWrapper` gets a defaulted runtime parameter. As an optional
+# dependency in the crate this came from, `tokio` implied a feature of the
+# same name; `dep:tokio` suppresses that, and the cfg silently went false —
+# which showed up as `SyncConnectionWrapper<SqliteConnection>` suddenly
+# needing two type arguments.
+tokio = ["dep:tokio"]
+bb8 = ["async-pool", "dep:bb8"]
+mobc = ["async-pool", "dep:mobc", "dep:async-trait", "tokio/sync"]
+deadpool = ["async-pool", "dep:deadpool"]
 i-implement-a-third-party-backend-and-opt-into-breaking-changes = []
 r2d2 = ["diesel_derives/r2d2", "dep:r2d2"]
 chrono = ["diesel_derives/chrono", "dep:chrono"]
