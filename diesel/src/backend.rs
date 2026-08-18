@@ -359,6 +359,24 @@ pub trait SqlDialect: self::private::TrustedBackend {
         doc = "See [`sql_dialect::built_in_window_function_require_order`] for provided default implementations"
     )]
     type BuiltInWindowFunctionRequireOrder;
+
+    /// Configures how this backend renders the value of a `LIMIT` clause that
+    /// sits inside a subselect.
+    ///
+    /// Every backend diesel ships binds it, the same as a top-level `LIMIT`.
+    /// A backend needs its own answer here only if its planner treats a
+    /// placeholder in that position differently from one anywhere else — see
+    #[cfg_attr(
+        feature = "turso",
+        doc = "[`Turso`](crate::turso::Turso), whose planner discards it."
+    )]
+    #[cfg_attr(not(feature = "turso"), doc = "the Turso backend.")]
+    ///
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::subselect_limit_syntax`] for provided default implementations"
+    )]
+    type SubselectLimitSyntax;
 }
 
 /// This module contains all options provided by diesel to configure the [`SqlDialect`] trait.
@@ -690,6 +708,19 @@ pub(crate) mod sql_dialect {
         /// for built-in window functions
         #[derive(Debug, Copy, Clone)]
         pub struct NoOrderRequired;
+    }
+
+    /// This module contains all reusable options to configure
+    /// [`SqlDialect::SubselectLimitSyntax`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod subselect_limit_syntax {
+        /// Indicates that this backend accepts a bind parameter as the value
+        /// of a `LIMIT` inside a subselect, exactly as it does at the top
+        /// level of a statement.
+        #[derive(Debug, Copy, Clone)]
+        pub struct BindSubselectLimit;
     }
 }
 

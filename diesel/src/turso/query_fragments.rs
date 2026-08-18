@@ -9,6 +9,7 @@
 //! "SQLite-like" trait.
 
 use crate::backend::sql_dialect::default_keyword_for_insert::DoesNotSupportDefaultKeyword;
+use crate::expression::bound::Bound;
 use crate::expression::{AppearsOnTable, Expression};
 use crate::insertable::{ColumnInsertValue, DefaultableColumnInsertValue, InsertValues};
 use crate::query_builder::from_clause::NoFromClause;
@@ -23,7 +24,8 @@ use crate::query_builder::insert_statement::{InsertOrIgnore, Replace};
 use crate::query_builder::{AstPass, IntoBoxedClause, QueryFragment};
 use crate::{Column, QueryResult};
 
-use crate::turso::backend::Turso;
+use crate::sql_types::BigInt;
+use crate::turso::backend::{LiteralSubselectLimit, Turso};
 
 /// SQLite/Turso require a LIMIT when OFFSET is present but no LIMIT was
 /// specified; `LIMIT -1` is the idiomatic "no upper bound" sentinel.
@@ -84,6 +86,35 @@ impl QueryFragment<Turso> for Replace {
 //
 // SQLite (and therefore Turso) requires `LIMIT -1` when an OFFSET is present
 // without a LIMIT, so these impls can't fall out of the generic paths.
+
+/// The `LIMIT` value itself, bound at the top level of a statement and
+/// written into the text inside a subselect. [`LiteralSubselectLimit`] is
+/// the whole of why; this is only where it happens.
+///
+/// The impl is for `LimitClause<Bound<BigInt, i64>>` and not for a generic
+/// expression because rendering a literal means having the value, and diesel
+/// builds every `LIMIT` it emits out of exactly this: `.limit(n)` takes an
+/// `i64` and wraps it as a bind. A `LimitClause` over anything else has no
+/// `QueryFragment<Turso>` impl at all, so it is a compile error rather than
+/// a statement Turso would fail to bind at run time.
+impl QueryFragment<Turso, LiteralSubselectLimit> for LimitClause<Bound<BigInt, i64>> {
+    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Turso>) -> QueryResult<()> {
+        out.push_sql(" LIMIT ");
+        if out.is_in_subselect() {
+            // The value is part of the SQL text now, so the text is no
+            // longer bounded by the query's Rust type — two limits are two
+            // statements. Saying so is what keeps the connection's cache
+            // from filling with one entry per value it ever saw; a limit
+            // that doesn't vary (`.single_value()`'s `1`, which is nearly
+            // all of them) is admitted on its second sighting regardless.
+            out.unsafe_to_cache_prepared();
+            out.push_sql(&self.0.item.to_string());
+        } else {
+            self.0.walk_ast(out.reborrow())?;
+        }
+        Ok(())
+    }
+}
 
 impl QueryFragment<Turso> for LimitOffsetClause<NoLimitClause, NoOffsetClause> {
     fn walk_ast<'b>(&'b self, _out: AstPass<'_, 'b, Turso>) -> QueryResult<()> {
@@ -151,7 +182,7 @@ impl<'a> IntoBoxedClause<'a, Turso> for LimitOffsetClause<NoLimitClause, NoOffse
 
 impl<'a, L> IntoBoxedClause<'a, Turso> for LimitOffsetClause<LimitClause<L>, NoOffsetClause>
 where
-    L: QueryFragment<Turso> + Send + 'a,
+    LimitClause<L>: QueryFragment<Turso> + Send + 'a,
 {
     type BoxedClause = BoxedLimitOffsetClause<'a, Turso>;
     fn into_boxed(self) -> Self::BoxedClause {
@@ -177,7 +208,7 @@ where
 
 impl<'a, L, O> IntoBoxedClause<'a, Turso> for LimitOffsetClause<LimitClause<L>, OffsetClause<O>>
 where
-    L: QueryFragment<Turso> + Send + 'a,
+    LimitClause<L>: QueryFragment<Turso> + Send + 'a,
     O: QueryFragment<Turso> + Send + 'a,
 {
     type BoxedClause = BoxedLimitOffsetClause<'a, Turso>;

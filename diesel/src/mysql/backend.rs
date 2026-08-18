@@ -102,6 +102,7 @@ impl SqlDialect for Mysql {
         sql_dialect::aggregate_function_expressions::NoAggregateFunctionExpressions;
 
     type BuiltInWindowFunctionRequireOrder = MysqlRequiresOrderForWindowFunctions;
+    type SubselectLimitSyntax = sql_dialect::subselect_limit_syntax::BindSubselectLimit;
 }
 
 impl DieselReserveSpecialization for Mysql {}
