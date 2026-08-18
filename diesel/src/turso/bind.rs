@@ -16,6 +16,8 @@ use crate::sql_types::HasSqlType;
 
 use crate::turso::backend::{Turso, TursoType};
 
+/// Collects the bind parameters of one statement, in the order the
+/// query builder places them.
 #[derive(Default, Debug)]
 pub struct TursoBindCollector<'a> {
     binds: Vec<turso::Value>,

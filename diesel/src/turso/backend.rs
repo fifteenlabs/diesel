@@ -24,10 +24,17 @@ pub struct Turso;
 /// existing SQL parsing/codegen assumptions hold.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum TursoType {
+    /// No value. Not a storage class of its own in SQLite terms, but the
+    /// bind path needs a metadata answer for a `NULL` like any other.
     Null,
+    /// A 64-bit signed integer. Also where `Bool` lands, as 0 or 1.
     Integer,
+    /// A 64-bit float.
     Real,
+    /// UTF-8 text. Dates, times and timestamps are stored here as
+    /// ISO-8601, which is what keeps them STRICT-compatible.
     Text,
+    /// A byte string. UUIDs and UNION values both travel as one.
     Binary,
 }
 

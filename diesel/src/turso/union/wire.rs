@@ -21,14 +21,24 @@
 
 use thiserror::Error;
 
+/// Why a blob was not a well-formed SQLite record.
+///
+/// Every variant means the bytes are wrong, not that the layout disagrees
+/// — a layout disagreement usually decodes without complaint, which is
+/// what [`super`]'s module docs are about.
 #[derive(Debug, Error)]
 pub enum WireError {
+    /// A length or payload ran off the end of the buffer.
     #[error("unexpected end of buffer while decoding")]
     UnexpectedEof,
+    /// A serial type SQLite reserves and assigns no meaning to (10 or 11).
     #[error("reserved SQLite record serial type: {0}")]
     ReservedSerialType(u64),
+    /// A TEXT payload's bytes were not UTF-8.
     #[error("TEXT payload was not valid UTF-8: {0}")]
     InvalidUtf8(std::string::FromUtf8Error),
+    /// A UNION's outer record carried something other than the single
+    /// column the framing requires.
     #[error("UNION outer record had {0} columns, expected exactly 1")]
     UnexpectedOuterColumnCount(usize),
 }
@@ -60,6 +70,8 @@ pub fn decode_union(buf: &[u8]) -> Result<(u8, turso::Value), WireError> {
 
 // -- SQLite record format ----------------------------------------------------
 
+/// Encode values as one SQLite record: a header of serial types, then
+/// the payloads back to back.
 pub fn encode_record(values: &[turso::Value]) -> Vec<u8> {
     let mut out = Vec::new();
     encode_record_into(values, &mut out);
@@ -92,6 +104,11 @@ fn encode_record_into(values: &[turso::Value], out: &mut Vec<u8>) {
     out.extend_from_slice(&body_bytes);
 }
 
+/// Decode a SQLite record back into its column values.
+///
+/// The record carries storage classes and nothing else, so this cannot
+/// tell a correct layout from a drifted one — it only reports bytes that
+/// are malformed outright.
 pub fn decode_record(buf: &[u8]) -> Result<Vec<turso::Value>, WireError> {
     let (header_size, len_consumed) = read_varint(buf)?;
     let header_end = header_size as usize;

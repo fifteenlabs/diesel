@@ -30,6 +30,7 @@ pub(super) mod sql_types {
     //! was intended. A newtype would close that hole but costs us the
     //! free `AsExpression` / `FromSqlRow` impls that come from the shared
     //! foreign proxy.
+    /// A UUID column: 16 raw bytes, spelled for the reader.
     pub type Uuid = crate::sql_types::Binary;
 }
 

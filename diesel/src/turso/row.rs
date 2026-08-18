@@ -73,6 +73,7 @@ impl<'a, 'n> RowIndex<&'n str> for TursoRow<'a> {
     }
 }
 
+/// One cell of a [`TursoRow`], addressed by column position.
 #[derive(Debug)]
 pub struct TursoField<'f, 'row> {
     row: &'f TursoRow<'row>,

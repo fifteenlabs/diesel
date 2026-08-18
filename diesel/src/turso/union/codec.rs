@@ -34,6 +34,7 @@ use crate::turso::value::TursoValue;
 pub struct TaggedUnion<E: 'static>(PhantomData<fn() -> E>);
 
 impl<E: 'static> TaggedUnion<E> {
+    /// The marker value. Carries no data — `E` is the whole type.
     pub const fn new() -> Self {
         Self(PhantomData)
     }

@@ -57,8 +57,9 @@
 //! unqualified, while diesel renders the column as `"messages"."mid"` and
 //! parenthesises comparisons. Turso matches an expression index by
 //! comparing resolved expression trees, not text, so the qualification and
-//! the parentheses make no difference — `tests/expression_index.rs` pins
-//! that with `EXPLAIN QUERY PLAN` against a real index.
+//! the parentheses make no difference — `fifteen-db`'s
+//! `tests/expression_index_plans.rs` pins that with `EXPLAIN QUERY PLAN`
+//! against the real indexes, one assertion per index.
 //!
 //! [`codec`]: super::codec
 
@@ -66,6 +67,8 @@ use std::marker::PhantomData;
 
 use crate::expression::{AppearsOnTable, Expression, SelectableExpression, TypedExpressionType};
 use crate::query_builder::{AstPass, QueryFragment, QueryId};
+// `SqlType` is imported for its *derive*, which is what gives `Composite`
+// `SingleValue` and hence a `TypedExpressionType`.
 use crate::sql_types::{HasSqlType, Nullable, SqlType};
 
 use crate::turso::backend::{Turso, TursoType};
@@ -443,11 +446,3 @@ pub type NullableOf<ST> = <ST as crate::sql_types::IntoNullable>::Nullable;
 /// `Nullable<Composite<S>>` — a struct variant's extracted payload type,
 /// spelled for the derive.
 pub type NullableComposite<S> = Nullable<Composite<S>>;
-
-// A `SqlType` bound that would otherwise be unused: `Composite<S>` has to
-// satisfy it for `Nullable<Composite<S>>` to exist at all, and naming it
-// here keeps the import honest.
-const _: fn() = || {
-    fn assert_sql_type<T: SqlType>() {}
-    assert_sql_type::<Composite<()>>();
-};
