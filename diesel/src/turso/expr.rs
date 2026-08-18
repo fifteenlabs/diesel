@@ -34,7 +34,7 @@
 //! (diesel has none at all). Both are `define_sql_function!` declarations
 //! rather than hand-written nodes, so they are backend-generic and carry no
 //! impls of their own — the SQLite-family spelling is the only thing tying
-//! them to [`Turso`].
+//! them to [`crate::turso::Turso`].
 
 use crate::sql_types::SingleValue;
 
