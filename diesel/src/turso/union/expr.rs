@@ -50,6 +50,33 @@
 //! and because a bind would defeat the expression indexes. Neither string
 //! ever comes from a caller: both are consts on derive-generated types.
 //!
+//! # A name is not always stored as it was written
+//!
+//! The consts those nodes push are already in Turso's spelling, not the
+//! Rust one, and the difference is not cosmetic. Turso re-renders a
+//! `CREATE TYPE` from its own AST before persisting it and quotes any
+//! member name that would not lex back as a plain identifier — so
+//! `UNION(first INT, second INT)` is stored as `UNION("first" INT, second
+//! INT)`, and the two quote characters become *part of the variant's name*.
+//! `union_tag(col)` then returns the seven-character string `"first"`, and
+//! `union_extract(col, 'first')` is not a NULL but
+//! `Parse error: cannot resolve union variant 'first'`.
+//!
+//! Nothing on the whole-value path notices, because `ToSql` binds the wire
+//! blob and never names a tag — such a union inserts, selects and
+//! round-trips perfectly and then fails at the first tag test. So
+//! `#[derive(UnionSchema)]` computes each name's stored spelling at
+//! expansion time (its `stored_name`, which asks Turso's own lexer whether
+//! the name is a keyword) and emits *that* as [`UnionVariant::TAG_NAME`],
+//! [`CompositeField::NAME`] and the DDL member name alike. One spelling
+//! everywhere, so `union_tag(col).eq(TAG_NAME)` and
+//! `col.extract(v)` agree with the database and with each other, and the
+//! nodes below can push a const with no per-query work.
+//!
+//! For every name that needs no quoting — which is every name in this
+//! workspace — the stored spelling and the written one are the same string
+//! and nothing renders differently than it did.
+//!
 //! # Indexes still match
 //!
 //! `messages_tg` and friends are expression indexes over
@@ -96,8 +123,16 @@ pub trait UnionVariant: 'static {
     /// carrying it here keeps one source of truth with the codec.
     const TAG: u8;
 
-    /// The name in `CREATE TYPE … AS UNION(…)`, and the literal
-    /// [`Extract`] pushes.
+    /// The name in `CREATE TYPE … AS UNION(…)`, the literal [`Extract`]
+    /// pushes, and the string `union_tag` returns — one spelling, because
+    /// Turso has one.
+    ///
+    /// **In Turso's spelling, not the Rust one.** A tag the engine requotes
+    /// on the way into the schema is *named* with the quotes afterwards, so
+    /// a keyword tag's `TAG_NAME` is `"first"` — seven characters — and
+    /// that is what `union_extract` resolves and what `union_tag` compares
+    /// equal to. See the module docs; a hand-written impl has to apply the
+    /// same rule, and the derive applies it for you.
     const TAG_NAME: &'static str;
 }
 
@@ -129,7 +164,9 @@ pub trait CompositeField: 'static {
     type SqlType;
 
     /// The name in `CREATE TYPE … AS STRUCT(…)`, and the literal
-    /// [`GetField`] pushes.
+    /// [`GetField`] pushes — in Turso's spelling, quotes and all where the
+    /// engine requotes it. Same rule and same reason as
+    /// [`UnionVariant::TAG_NAME`].
     const NAME: &'static str;
 
     /// Position in the STRUCT's declaration order — the same index the
@@ -320,6 +357,60 @@ where
     type IsAggregate = E::IsAggregate;
 }
 
+// Which expressions a `GROUP BY` over one of these nodes makes selectable.
+//
+// `ValidGrouping` above answers "may this expression appear alongside
+// aggregates", and for a column it answers it by asking
+// `IsContainedInGroupBy`: `table!` writes `IsContainedInGroupBy<col> for
+// col`, so `GROUP BY col` makes `col` — and, through the delegation above,
+// every expression over `col` — selectable. Nothing wrote the mirror
+// image, so `GROUP BY union_tag(col)` could not select the tag it grouped
+// by: `col: ValidGrouping<UnionTag<col>>` wants `UnionTag<col>:
+// IsContainedInGroupBy<col>`, and there was no such impl. That was a gap
+// in these nodes rather than a fact about SQL — Turso runs the query — and
+// it made the natural `.select((col.union_tag(), count_star()))` a compile
+// error while the same query written with `count_star()` alone was fine.
+//
+// So each node forwards the question to its operand, which is the only
+// shape available: the verdict for `UnionTag<col>` has to travel through
+// `col`'s own `ValidGrouping` impl, so it cannot be made narrower than
+// `col`'s. The consequence is that grouping by one of these expressions
+// also admits the operand and its siblings — `GROUP BY union_tag(col)`
+// will let you select a bare `col`, which SQLite and Turso allow (an
+// arbitrary row from the group) but which is not functionally determined.
+// Diesel's model has one bit here and this is the bit that keeps the
+// determined case working; the alternative would be a second
+// `ValidGrouping` impl per node, overlapping the delegating one.
+//
+// All three nodes get it, because all three are pure scalar functions of
+// their operand: `union_tag(col)`, `union_extract(col, 't')` and
+// `struct_extract(union_extract(col, 't'), 'f')` are each constant within
+// a group of equal operands, so if the operand is grouped, so are they.
+// Giving it to only one would leave `GROUP BY union_extract(…)` — a real
+// query, since a struct variant's payload is what one groups by — with
+// exactly the defect this removes.
+
+impl<E, T, V> crate::expression::IsContainedInGroupBy<T> for Extract<E, V>
+where
+    E: crate::expression::IsContainedInGroupBy<T>,
+{
+    type Output = E::Output;
+}
+
+impl<E, T, F> crate::expression::IsContainedInGroupBy<T> for GetField<E, F>
+where
+    E: crate::expression::IsContainedInGroupBy<T>,
+{
+    type Output = E::Output;
+}
+
+impl<E, T> crate::expression::IsContainedInGroupBy<T> for UnionTag<E>
+where
+    E: crate::expression::IsContainedInGroupBy<T>,
+{
+    type Output = E::Output;
+}
+
 // `QueryId` decides whether the enclosing statement can be prepared once
 // and reused. These nodes are the whole reason this module exists — a
 // `dsl::sql` fragment reports itself unsafe to cache and takes the
@@ -353,6 +444,12 @@ where
         // Not a bind: Turso resolves the tag to an ordinal while
         // translating and rejects a parameter in that position. Safe —
         // `TAG_NAME` is a const on a derive-generated type, never input.
+        //
+        // Pushed verbatim because it is already Turso's spelling of the
+        // name: for a tag the engine requotes when it stores the
+        // declaration, `TAG_NAME` carries the quotes, and what lands here
+        // is `union_extract(col, '"first"')` — the only form that resolves.
+        // See the module docs for what happens without that.
         out.push_sql(V::TAG_NAME);
         out.push_sql("')");
         Ok(())
@@ -368,6 +465,8 @@ where
         out.push_sql("struct_extract(");
         self.expr.walk_ast(out.reborrow())?;
         out.push_sql(", '");
+        // Turso's spelling of the field name, for the same reason as
+        // `Extract` above.
         out.push_sql(F::NAME);
         out.push_sql("')");
         Ok(())
