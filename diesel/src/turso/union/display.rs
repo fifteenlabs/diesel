@@ -5,7 +5,7 @@
 //! module stays agnostic of SQLite's record format and can't drift from
 //! the writer side.
 
-use crate::turso::union::{UnionSchema, wire};
+use crate::turso::union::{wire, UnionSchema};
 
 /// Render a UNION blob against `T`'s layout, or `None` if the bytes do
 /// not decode as one.

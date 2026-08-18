@@ -24,3 +24,12 @@ pub use crate::mysql_like::data_types;
 
 /// The MySQL query builder
 pub type MysqlQueryBuilder = MysqlLikeQueryBuilder<Mysql>;
+
+// The async connection for this backend, which used to be `diesel-async`'s
+// own `mysql` module. It is a submodule rather than a peer
+// so that everything that speaks this backend is reachable from one path.
+#[cfg(feature = "async-mysql")]
+pub mod async_connection;
+#[cfg(feature = "async-mysql")]
+#[doc(inline)]
+pub use self::async_connection::{AsyncMysqlConnection, MysqlCancelToken};

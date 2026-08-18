@@ -9,10 +9,10 @@
 //! backend so anything the upstream chrono integration accepts also parses
 //! here.
 
-use ::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crate::deserialize::{self, FromSql};
 use crate::serialize::{self, IsNull, Output, ToSql};
 use crate::sql_types;
+use ::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use crate::turso::backend::Turso;
 use crate::turso::value::TursoValue;

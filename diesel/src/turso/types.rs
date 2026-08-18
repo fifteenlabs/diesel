@@ -11,7 +11,7 @@ use crate::serialize::{self, IsNull, Output, ToSql};
 use crate::sql_types;
 
 use crate::turso::backend::Turso;
-use crate::turso::value::{TursoValue, mismatch};
+use crate::turso::value::{mismatch, TursoValue};
 
 // Widening integer codecs share the same shape: emit Value::Integer on
 // encode, narrow-and-validate on decode.
@@ -143,3 +143,20 @@ impl FromSql<sql_types::Binary, Turso> for Vec<u8> {
 /// now written.
 #[derive(Debug, Clone, Copy, Default, QueryId, crate::sql_types::SqlType)]
 pub struct Timestamptz;
+
+// `table!` emits the `std::ops::Add`/`Sub` impls for every column it
+// declares, and those name `<SqlType as sql_types::ops::Add>::Rhs` — so a
+// SQL type without these impls cannot appear in a `table!` at all. Turso's
+// `Timestamptz` had neither, which is why the one test that declares a
+// `Timestamptz` column has never compiled: the whole `turso` test binary
+// failed to build on it, and a test binary that does not build reports no
+// failures. Mirrors `Timestamp`'s pair in `sql_types::ops`.
+impl crate::sql_types::ops::Add for Timestamptz {
+    type Rhs = crate::sql_types::Interval;
+    type Output = Timestamptz;
+}
+
+impl crate::sql_types::ops::Sub for Timestamptz {
+    type Rhs = crate::sql_types::Interval;
+    type Output = Timestamptz;
+}

@@ -101,11 +101,8 @@
 
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{ToTokens, format_ident, quote};
-use syn::{
-    Attribute, Data, DataStruct, DeriveInput, Fields, Ident, LitStr, Type, Variant,
-    parse_macro_input,
-};
+use quote::{format_ident, quote, ToTokens};
+use syn::{Attribute, Data, DataStruct, DeriveInput, Fields, Ident, LitStr, Type, Variant};
 
 pub(crate) fn expand_union_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let enum_ident = &input.ident;

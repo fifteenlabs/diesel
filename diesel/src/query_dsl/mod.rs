@@ -21,6 +21,13 @@ use crate::query_source::{QueryRelation, joins};
 use crate::result::QueryResult;
 use alloc::vec::Vec;
 
+// The async counterparts of `RunQueryDsl` and `SaveChangesDsl`. They keep
+// those names — see the module's own documentation for why they must — so
+// they are deliberately *not* re-exported from this module: two traits of
+// one name cannot both live at one path. `crate::async_dsl` is where they
+// are reachable from.
+#[cfg(feature = "async")]
+pub mod async_run_query_dsl;
 mod belonging_to_dsl;
 #[doc(hidden)]
 pub mod boxed_clone_dsl;
