@@ -1,12 +1,11 @@
 //! `uuid` integration — Turso-side codec for `uuid::Uuid` stored in a
 //! `Binary` (BLOB) column.
 //!
-//! Diesel's `sqlite + uuid` features ship a `UuidProxy` that generates
-//! backend-generic `AsExpression<Binary>` / `FromSqlRow` impls for
-//! `uuid::Uuid`. Turbo-diesel enables those features purely to reuse
-//! that proxy; we don't use crate's sqlite backend itself. All we add
-//! here is the Turso-side `ToSql` / `FromSql` pair so the round-trip
-//! produces a 16-byte blob.
+//! The backend-generic `AsExpression<Binary>` / `FromSqlRow` proxies for
+//! `uuid::Uuid` are in `crate::type_impls::binary_uuid`, shared with the
+//! SQLite backend, which stores a UUID the same way. All that is here is
+//! the Turso-side `ToSql` / `FromSql` pair, so the round-trip produces a
+//! 16-byte blob.
 //!
 //! A UUID inside a UNION field goes through this same pair — see
 //! `union::field_type`, which is where the composite layer's own
@@ -20,17 +19,17 @@ use uuid::Uuid;
 use crate::turso::backend::Turso;
 use crate::turso::value::{TursoValue, mismatch};
 
-pub mod sql_types {
+pub(super) mod sql_types {
     //! `Uuid` is a readability alias for `Binary` — UUIDs travel as raw
-    //! 16-byte blobs. Schema files `use turbo_diesel::sql_types::Uuid`
+    //! 16-byte blobs. Schema files `use diesel::turso::sql_types::Uuid`
     //! and column-type `id -> Uuid` instead of the bare `Binary`.
     //!
     //! Transparency warning: because this is a type alias, `Vec<u8>` /
     //! `&[u8]` still satisfy any bound involving `sql_types::Uuid` —
     //! diesel will happily accept a raw 16-byte blob where a `uuid::Uuid`
     //! was intended. A newtype would close that hole but costs us the
-    //! free `AsExpression` / `FromSqlRow` impls that come from diesel's
-    //! `sqlite + uuid` foreign proxy.
+    //! free `AsExpression` / `FromSqlRow` impls that come from the shared
+    //! foreign proxy.
     pub type Uuid = crate::sql_types::Binary;
 }
 
