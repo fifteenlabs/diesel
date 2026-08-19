@@ -176,3 +176,75 @@ async fn a_multi_row_statement_applies_to_every_row_even_if_one_row_is_read() ->
     assert_eq!(all, vec![2, 2, 2, 2, 2]);
     Ok(())
 }
+
+/// `.returning(…)` followed by `.execute()` — the caller who wants the
+/// clause's effect but not its rows — reports the row count and applies the
+/// write exactly once.
+///
+/// This used to be the worst answer a query can give: `Err` *and* done.
+/// `execute_returning_count` ran the statement through
+/// `turso::Statement::execute`, which steps with `columns: None`, and a step
+/// that yields a row in that mode is
+/// `Misuse("unexpected row during execution")` — raised after the DML had
+/// already taken effect. So the insert happened, the caller was told it had
+/// not, and a caller that retries on error (which is the sane reading of
+/// "this returned an error") applied it twice.
+///
+/// Diesel's SQLite and PostgreSQL backends both answer this with a count, so
+/// nothing in the calling code marks it as a shape to avoid.
+#[tokio::test(flavor = "current_thread")]
+async fn returning_execute_reports_a_count_and_applies_once() -> Result<()> {
+    let mut conn = setup().await?;
+
+    let affected = diesel::insert_into(notes::table)
+        .values((notes::body.eq("only once"), notes::hits.eq(0i64)))
+        .returning(notes::id)
+        .execute(&mut conn)
+        .await?;
+    assert_eq!(affected, 1);
+
+    let bodies: Vec<String> = notes::table.select(notes::body).load(&mut conn).await?;
+    assert_eq!(bodies, vec!["only once".to_string()]);
+
+    // Multi-row too: the count is the number of rows changed, not the number
+    // of rows anybody read off the RETURNING stream.
+    for id in 2..=4 {
+        diesel::insert_into(notes::table)
+            .values((notes::id.eq(id), notes::body.eq("x"), notes::hits.eq(0i64)))
+            .execute(&mut conn)
+            .await?;
+    }
+    let affected = diesel::update(notes::table)
+        .set(notes::hits.eq(notes::hits + 1))
+        .returning(notes::hits)
+        .execute(&mut conn)
+        .await?;
+    assert_eq!(affected, 4);
+
+    let affected = diesel::delete(notes::table)
+        .returning(notes::id)
+        .execute(&mut conn)
+        .await?;
+    assert_eq!(affected, 4);
+    Ok(())
+}
+
+/// The same root cause on a statement with no `RETURNING` in sight: a plain
+/// `SELECT` run through `.execute()`, which every other diesel backend
+/// answers with a row count of zero rather than an error.
+///
+/// It reads as a pointless thing to write until you notice it is what
+/// `ExecuteDsl` does for any query a caller runs for its side effects and
+/// does not want the rows of — and it is what a generic helper over
+/// `QueryFragment` ends up emitting.
+#[tokio::test(flavor = "current_thread")]
+async fn a_select_run_for_its_side_effects_reports_zero_changes() -> Result<()> {
+    let mut conn = setup().await?;
+    diesel::insert_into(notes::table)
+        .values((notes::body.eq("a"), notes::hits.eq(0i64)))
+        .execute(&mut conn)
+        .await?;
+
+    assert_eq!(notes::table.select(notes::id).execute(&mut conn).await?, 0);
+    Ok(())
+}

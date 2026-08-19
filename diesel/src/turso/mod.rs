@@ -51,7 +51,6 @@ pub mod probe;
 mod query_fragments;
 pub mod row;
 pub mod string_list;
-mod transaction;
 pub(crate) mod types;
 pub mod union;
 mod uuid;
@@ -62,7 +61,6 @@ pub use self::bind::{TursoBindBuffer, TursoBindCollector};
 pub use self::connection::{StatementCacheStats, TursoConnection};
 pub use self::error::{turso_to_connection, turso_to_diesel};
 pub use self::row::{TursoField, TursoRow};
-pub use self::transaction::TursoTransactionManager;
 pub use self::value::TursoValue;
 
 #[doc(hidden)]
