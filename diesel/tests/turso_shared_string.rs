@@ -1,7 +1,11 @@
 //! `gpui::SharedString` as a UNION field type — covers the fork's
 //! fifteen-db use case of `Option<gpui::SharedString>` in variant bodies.
-
-#![cfg(feature = "gpui")]
+//!
+//! Its own test target rather than a module of `tests/turso`, because it is
+//! the only thing in the Turso suite that needs `gpui`, and naming `gpui` in
+//! the suite's `required-features` made all 177 of the others unselectable
+//! while that dependency does not resolve. See the `[[test]]` entries in
+//! `Cargo.toml`.
 
 use anyhow::Result;
 use diesel::async_dsl::RunQueryDsl;

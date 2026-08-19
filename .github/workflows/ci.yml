@@ -289,6 +289,51 @@ jobs:
         shell: bash
         run: cargo +stable  test --manifest-path diesel_compile_tests/Cargo.toml
 
+  # The Turso backend, which the matrix above cannot carry: `turso` is not one
+  # of the `cargo xtask run-tests <backend>` backends, and it needs none of the
+  # matrix's setup — the `turso` crate is pure Rust and every test here opens
+  # `:memory:`, so there is no server to install, no `DATABASE_URL`, and
+  # nothing platform-specific to spread over five runners.
+  turso:
+    name: Check turso backend
+    runs-on: ubuntu-latest
+    needs: [rustfmt_and_clippy]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: turso-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      # The statement cache's admission rules, the UNION wire codec and the
+      # DDL renderer: pure functions, and the specification of the cache
+      # policy lives in these assertions.
+      - name: Run unit tests
+        shell: bash
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo test -p diesel --lib --features "turso chrono"
+
+      # The acceptance suite. `tests/turso_shared_string.rs` is deliberately
+      # not run: it is the one target that needs `gpui`, which does not
+      # currently resolve in this workspace, and it is a separate `[[test]]`
+      # target precisely so that it cannot take this one down with it.
+      - name: Run the acceptance suite
+        shell: bash
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo test -p diesel --test turso --features "turso chrono"
+
+      # Filtered to `turso_union` on purpose: `diesel_derives`' remaining lib
+      # tests are `insta` snapshots that already fail on this workspace with
+      # no turso feature involved. `-D warnings` is off here because this step
+      # builds `diesel` with no backend at all, which warns about code no
+      # feature reaches.
+      - name: Run the UnionSchema derive's tests
+        shell: bash
+        run: cargo test -p diesel_derives --lib --features turso turso_union
+
   rustfmt_and_clippy:
     name: Check rustfmt style && run clippy
     runs-on: ubuntu-latest

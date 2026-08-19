@@ -523,7 +523,11 @@ where
     }
 }
 
-#[cfg(test)]
+// Gated on a *sync* backend, not just on `test`: every test below reaches
+// `crate::test_helpers` for a `TestConnection`, and there is none when the
+// only backend compiled in is Turso, whose connection is async. Without this
+// the whole lib test binary fails to build under `--features turso`.
+#[cfg(all(test, any(feature = "sqlite", feature = "postgres", feature = "mysql")))]
 // that's a false positive for `panic!`/`assert!` on rust 2018
 #[allow(clippy::uninlined_format_args)]
 mod test {

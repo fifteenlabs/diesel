@@ -608,5 +608,12 @@ mod tests {
 
         #[cfg(feature = "mysql")]
         assert_boxed_query_send!(crate::mysql::Mysql);
+
+        // Turso as well, so that `--features turso` alone leaves this test
+        // with a body — without an arm here `assert_send` and the macro are
+        // both dead code, which is a hard error under the `-D warnings` CI
+        // builds.
+        #[cfg(feature = "turso")]
+        assert_boxed_query_send!(crate::turso::Turso);
     }
 }

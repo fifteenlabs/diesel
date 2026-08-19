@@ -682,6 +682,24 @@ pub(crate) mod sql_dialect {
         /// Indicates that this backend supports aggregate function expressions similar to PostgreSQL
         #[derive(Debug, Copy, Clone)]
         pub struct PostgresLikeAggregateFunctionExpressions;
+
+        /// Indicates that this backend supports `FILTER (WHERE …)` on an
+        /// aggregate function but *not* an `ORDER BY` inside its argument
+        /// list.
+        ///
+        /// The two clauses are separate SQL features and an engine can have
+        /// one without the other; [`PostgresLikeAggregateFunctionExpressions`]
+        /// gates both together, so a backend that picked it to get `FILTER`
+        /// also got `aggregate_order` — which then compiles and fails at run
+        /// time. Turso is such an engine today: it parses `FILTER` and
+        /// answers `ORDER BY` inside an aggregate with "Parse error: ORDER BY
+        /// clause is not supported yet in aggregate functions".
+        ///
+        /// Selecting this makes `AggregateExpressionMethods::aggregate_order`
+        /// a *compile* error for the backend, which is the whole point: a
+        /// dialect marker exists to move an engine's limits to build time.
+        #[derive(Debug, Copy, Clone)]
+        pub struct FilterOnlyAggregateFunctionExpressions;
     }
 
     /// This module contains all reusable options to configure [`SqlDialect::WindowFrameExclusionSupport`]

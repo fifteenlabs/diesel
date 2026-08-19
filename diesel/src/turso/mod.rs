@@ -5,11 +5,22 @@
 //! than riding on diesel's `Sqlite`: the raw value type is
 //! `turso::Value` rather than a byte buffer, the bind collector hands the
 //! driver a `Vec<turso::Value>` rather than a statement to bind onto, and
-//! and the SQL differs in the two places noted on [`Turso`]'s `SqlDialect`
-//! impl — an unparenthesized join `FROM` clause, and a `LIMIT` inside a
-//! subselect, which is written into the text rather than bound because
-//! Turso's planner discards a placeholder there. Everything else about the
-//! dialect mirrors SQLite's.
+//! the SQL differs in the three places noted on [`Turso`]'s `SqlDialect`
+//! impl:
+//!
+//! * an unparenthesized join `FROM` clause, because Turso's planner rejects
+//!   the parenthesized group diesel writes;
+//! * no `ORDER BY` inside an aggregate function — Turso parses `FILTER
+//!   (WHERE …)` but not `max(x ORDER BY y)`, and diesel's one marker for
+//!   aggregate syntax gates both, so this backend selects a marker of its
+//!   own that keeps `filter` and turns `aggregate_order` into a compile
+//!   error;
+//! * a `LIMIT` inside a subselect, which is written into the text rather
+//!   than bound because Turso's planner discards a placeholder there.
+//!
+//! Everything else about the dialect mirrors SQLite's. Only the second of
+//! the three is a capability SQLite has and Turso does not; the other two
+//! are the same capability spelled differently.
 //!
 //! # What is here
 //!
@@ -47,7 +58,6 @@ mod connection;
 mod chrono;
 mod error;
 pub mod expr;
-pub mod pragma;
 pub mod probe;
 mod query_fragments;
 pub mod row;

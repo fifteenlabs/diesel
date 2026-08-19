@@ -129,19 +129,28 @@ chrono = "0.4"
 # crate of its own.
 diesel_migrations = { path = "../diesel_migrations", features = ["async"] }
 
-# The Turso backend's acceptance suite. `chrono` and `gpui` are here rather
-# than in `required-features`' spirit of "the feature under test" because
-# two of the modules cover Turso's handling of those types; `turso` alone
-# builds and runs everything else. `bb8` and `deadpool` are here for the same
-# reason and one more: the bounds on their connection managers are only
-# checked where the manager is instantiated, so a module that names
-# `TursoConnection` as the pooled type is the only thing that can prove the
-# backend is poolable at all.
+# The Turso backend's acceptance suite. `chrono` is here rather than in
+# `required-features`' spirit of "the feature under test" because two of the
+# modules cover Turso's handling of `chrono` types; `turso` alone builds and
+# runs everything else.
 [[test]]
 name = "turso"
 path = "tests/turso/main.rs"
 harness = true
-required-features = ["turso", "chrono", "gpui", "bb8", "deadpool"]
+required-features = ["turso", "chrono"]
+
+# `gpui::SharedString` as a UNION field type, in a target of its own rather
+# than as one more module of the suite above. `gpui` does not currently
+# resolve in this workspace — published `gpui 0.2.2` pulls `zed-font-kit`,
+# which mixes two incompatible `core-graphics` versions — and while it was
+# named in the suite's `required-features` it took the other 177 tests down
+# with it: `cargo test --test turso` simply refused to select the target.
+# One module needs gpui, so one target needs gpui.
+[[test]]
+name = "turso_shared_string"
+path = "tests/turso_shared_string.rs"
+harness = true
+required-features = ["turso", "gpui"]
 
 [features]
 default = ["with-deprecated", "32-column-tables"]

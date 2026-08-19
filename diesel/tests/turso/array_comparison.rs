@@ -25,7 +25,9 @@ use anyhow::Result;
 use diesel::async_dsl::RunQueryDsl;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::prelude::*;
-use diesel::turso::{Turso, TursoConnection};
+use diesel::turso::TursoConnection;
+
+use crate::sql_text::rendered;
 
 diesel::table! {
     items (id) {
@@ -72,18 +74,6 @@ async fn setup() -> Result<TursoConnection> {
             .await?;
     }
     Ok(conn)
-}
-
-/// The SQL a query renders to, without the bind values.
-fn rendered<Q>(query: &Q) -> String
-where
-    Q: diesel::query_builder::QueryFragment<Turso> + diesel::query_builder::QueryId,
-{
-    let debug = diesel::debug_query::<Turso, _>(query).to_string();
-    match debug.split_once(" -- binds:") {
-        Some((sql, _)) => sql.to_string(),
-        None => debug,
-    }
 }
 
 // ── 1. the failure this design exists to prevent ─────────────────────────
@@ -401,6 +391,50 @@ async fn real_columns_fall_back_to_placeholders() -> Result<()> {
         got,
         vec![0, 2],
         "the fallback still has to return the right rows"
+    );
+    Ok(())
+}
+
+/// The empty list on the *fallback* path, which is a different branch from
+/// the empty list in `an_empty_list_needs_no_special_case` above and the only
+/// thing holding the `decode_expr(…).is_some()` clause in `In`/`NotIn`.
+///
+/// Without that clause an empty `REAL` list takes the `json_each` branch —
+/// which for a list `Many` has declined to convert renders *nothing at all*
+/// between the parens — and the statement becomes `"m"."f" IN ()`, a syntax
+/// error. Every other test in this file uses an integer, text or blob column,
+/// so all of them stay green while that happens.
+#[tokio::test(flavor = "current_thread")]
+async fn an_empty_real_list_keeps_the_ansi_constant() -> Result<()> {
+    let mut conn = setup().await?;
+
+    let sql = rendered(
+        &items::table
+            .filter(items::score.eq_any(Vec::<f64>::new()))
+            .select(items::id),
+    );
+    assert!(
+        sql.contains("1=0") && !sql.contains("IN ()"),
+        "an empty REAL list has to keep the ANSI `1=0`; the json_each branch \
+         would render `IN ()`. Rendered:\n  {sql}"
+    );
+
+    let none: Vec<i64> = items::table
+        .filter(items::score.eq_any(Vec::<f64>::new()))
+        .select(items::id)
+        .load(&mut conn)
+        .await?;
+    assert!(none.is_empty(), "and it still matches nothing");
+
+    let all: Vec<i64> = items::table
+        .filter(items::score.ne_all(Vec::<f64>::new()))
+        .select(items::id)
+        .load(&mut conn)
+        .await?;
+    assert_eq!(
+        all.len(),
+        NAMES.len(),
+        "and its NOT IN still matches everything"
     );
     Ok(())
 }
