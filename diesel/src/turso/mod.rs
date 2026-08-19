@@ -34,6 +34,7 @@
 //! They can be narrowed now that there is no other crate; they are left
 //! alone here so that this change is a move and not also an API edit.
 
+pub mod array_comparison;
 pub(crate) mod backend;
 pub mod bind;
 mod connection;
@@ -56,7 +57,8 @@ pub mod union;
 mod uuid;
 pub mod value;
 
-pub use self::backend::{Turso, TursoQueryBuilder, TursoType};
+pub use self::array_comparison::JsonList;
+pub use self::backend::{Turso, TursoJsonArrayComparison, TursoQueryBuilder, TursoType};
 pub use self::bind::{TursoBindBuffer, TursoBindCollector};
 pub use self::connection::{StatementCacheStats, TursoConnection};
 pub use self::error::{turso_to_connection, turso_to_diesel};

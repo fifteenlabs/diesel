@@ -5,6 +5,7 @@
 //! binary links the (large) query-builder generics once instead of
 //! once per file.
 
+mod array_comparison;
 mod batch_insert;
 mod case_expression;
 mod chrono_support;
