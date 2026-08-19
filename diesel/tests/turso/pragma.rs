@@ -4,8 +4,15 @@
 //! text does something. `PRAGMA foreign_keys` is the one pragma the app's
 //! stores depend on for correctness — whatsapp.db and slack.db both declare
 //! `REFERENCES` constraints that are *only* enforced if the connection
-//! turned this on — so the test worth having is a write that must fail
-//! afterwards, not a string comparison.
+//! turned this on — so the test worth having is a write that must fail,
+//! not a string comparison.
+//!
+//! Enforcement is now part of establishing a connection rather than
+//! something each store remembers, so what these tests pin down is the pair
+//! of doors: `establish` gives an enforcing connection, and
+//! `establish_for_migrations` gives the un-enforced one a table rebuild
+//! needs. A regression in either is a database that quietly accepts orphans
+//! or an upgrade that dies half-way through a rebuild.
 
 use anyhow::Result;
 use diesel::async_dsl::RunQueryDsl;
@@ -27,22 +34,23 @@ diesel::table! {
     }
 }
 
+const SCHEMA: &str = "CREATE TABLE owners(id INTEGER PRIMARY KEY, name TEXT NOT NULL) STRICT;
+     CREATE TABLE pets(id INTEGER PRIMARY KEY,
+                       owner_id INTEGER NOT NULL REFERENCES owners(id)) STRICT;";
+
 async fn setup() -> Result<TursoConnection> {
     let mut conn = TursoConnection::establish(":memory:").await?;
-    conn.batch_execute(
-        "CREATE TABLE owners(id INTEGER PRIMARY KEY, name TEXT NOT NULL) STRICT;
-         CREATE TABLE pets(id INTEGER PRIMARY KEY,
-                           owner_id INTEGER NOT NULL REFERENCES owners(id)) STRICT;",
-    )
-    .await?;
+    conn.batch_execute(SCHEMA).await?;
     Ok(conn)
 }
 
-/// Without the pragma the `REFERENCES` is decoration — this is the state a
-/// store lands in if the call is forgotten or misspelled.
+/// The migration door hands out the un-enforced connection, because a table
+/// rebuild drops a table children still point at. Nothing else should be
+/// opening a database this way.
 #[tokio::test(flavor = "current_thread")]
-async fn a_connection_without_the_pragma_accepts_an_orphan() -> Result<()> {
-    let mut conn = setup().await?;
+async fn the_migration_door_leaves_foreign_keys_off() -> Result<()> {
+    let mut conn = TursoConnection::establish_for_migrations(":memory:", false).await?;
+    conn.batch_execute(SCHEMA).await?;
 
     let n = diesel::insert_into(pets::table)
         .values((pets::id.eq(1), pets::owner_id.eq(404)))
@@ -52,12 +60,11 @@ async fn a_connection_without_the_pragma_accepts_an_orphan() -> Result<()> {
     Ok(())
 }
 
+/// Establishing a connection enforces, without the caller asking. This is
+/// the invariant every store depends on and none of them spells out.
 #[tokio::test(flavor = "current_thread")]
-async fn the_pragma_makes_the_reference_enforced() -> Result<()> {
+async fn establishing_a_connection_enforces_references() -> Result<()> {
     let mut conn = setup().await?;
-    diesel::turso::pragma::foreign_keys(true)
-        .execute(&mut conn)
-        .await?;
 
     let err = diesel::insert_into(pets::table)
         .values((pets::id.eq(1), pets::owner_id.eq(404)))
