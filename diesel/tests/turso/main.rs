@@ -24,6 +24,7 @@ mod m7_union_codec;
 mod m8_union_derive;
 mod m9_migrations;
 mod nested_transactions;
+mod pooling;
 mod pragma;
 mod query_plans;
 mod replace_into;
