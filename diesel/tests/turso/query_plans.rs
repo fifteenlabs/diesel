@@ -50,6 +50,8 @@ use diesel::turso::Turso;
 use diesel::turso::TursoConnection;
 use diesel::UnionSchema as DeriveUnionSchema;
 
+use crate::sql_text::rendered;
+
 // ── the schema under test ────────────────────────────────────────────────
 
 diesel::table! {
@@ -125,25 +127,6 @@ struct PlanStep {
     detail: String,
 }
 
-/// The SQL a query renders to, without the bind values `debug_query` appends
-/// after it.
-///
-/// The binds are dropped rather than substituted because `EXPLAIN QUERY PLAN`
-/// compiles a statement instead of running it: the `?` placeholders never need
-/// values, so a query can be planned straight from its rendering with nothing
-/// bound and nothing executed. That is also why these tests say nothing about
-/// the data — the plan is a property of the statement and the schema.
-fn rendered<Q>(query: &Q) -> String
-where
-    Q: diesel::query_builder::QueryFragment<Turso> + diesel::query_builder::QueryId,
-{
-    let debug = diesel::debug_query::<Turso, _>(query).to_string();
-    match debug.split_once(" -- binds:") {
-        Some((sql, _)) => sql.to_string(),
-        None => debug,
-    }
-}
-
 /// The planner's answer for `query`: every step, joined with " / ".
 ///
 /// Flattening the step tree into one string is deliberate. Each assertion here
@@ -156,19 +139,7 @@ async fn plan<Q>(conn: &mut TursoConnection, query: &Q) -> Result<String>
 where
     Q: diesel::query_builder::QueryFragment<Turso> + diesel::query_builder::QueryId,
 {
-    let sql = rendered(query);
-    // `EXPLAIN QUERY PLAN` is not an expression diesel can build, so this is
-    // the one raw statement in the file outside the DDL — and the text inside
-    // it is not hand-written SQL, it is what the DSL rendered on the line
-    // above.
-    let steps: Vec<PlanStep> = diesel::sql_query(format!("EXPLAIN QUERY PLAN {sql}"))
-        .load(conn)
-        .await?;
-    Ok(steps
-        .iter()
-        .map(|s| s.detail.as_str())
-        .collect::<Vec<_>>()
-        .join(" / "))
+    plan_of(conn, &rendered(query)).await
 }
 
 /// Assert the planner reaches `index`, and on failure say both what was asked
@@ -755,6 +726,11 @@ where
 }
 
 /// `plan`, for a statement that is already SQL text.
+///
+/// `EXPLAIN QUERY PLAN` is not an expression diesel can build, so this is the
+/// one raw statement in the file outside the DDL — and when it is reached
+/// through [`plan`] the text inside it is not hand-written SQL either, it is
+/// what the DSL rendered.
 async fn plan_of(conn: &mut TursoConnection, sql: &str) -> Result<String> {
     let steps: Vec<PlanStep> = diesel::sql_query(format!("EXPLAIN QUERY PLAN {sql}"))
         .load(conn)

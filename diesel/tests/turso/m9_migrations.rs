@@ -6,8 +6,14 @@
 //! Requires the multi-threaded Tokio runtime: the async migration
 //! harness wraps the sync diesel migration machinery via
 //! `tokio::task::block_in_place`, which panics on `current_thread`.
-
-#![cfg(feature = "migrations")]
+//!
+//! Nothing gates this module. It used to carry `#![cfg(feature =
+//! "migrations")]`, and `diesel` has no `migrations` feature — so the cfg
+//! was false in every build there has ever been and the module never
+//! compiled, which is exactly the sort of thing a `cfg` on a whole file
+//! hides. `diesel_migrations` is an unconditional dev-dependency (see
+//! `Cargo.toml`), and it is here for this file, so there is nothing to gate
+//! on.
 
 use anyhow::Result;
 use diesel::async_connection_wrapper::AsyncConnectionWrapper;

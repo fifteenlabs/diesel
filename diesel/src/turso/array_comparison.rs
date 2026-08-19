@@ -4,14 +4,15 @@
 //! # The problem this solves
 //!
 //! Diesel's default rendering of `eq_any` is
-//! [`AnsiSqlArrayComparison`](sql_dialect::array_comparison::AnsiSqlArrayComparison):
+//! [`AnsiSqlArrayComparison`](crate::backend::sql_dialect::array_comparison::AnsiSqlArrayComparison):
 //! one bind per element, so a three-element list is `IN (?, ?, ?)` and a
 //! four-element list is `IN (?, ?, ?, ?)`. Those are *different SQL texts*,
 //! and Turso — like SQLite — keys its compiled-program cache by the text. A
 //! call site whose list length varies therefore mints a new program on every
 //! distinct length, and the cache never helps it.
 //!
-//! This backend's cache (see [`crate::turso::StatementCache::admit`]) makes
+//! This backend's cache — `StatementCache::admit` in `turso::connection`,
+//! which is private, so this is a pointer rather than a link — makes
 //! that worse in a way worth spelling out, because it is the reason a
 //! chunked call site is the *guaranteed* bad case rather than merely a
 //! likely one. Placeholder runs are collapsed into a "family", and the
@@ -257,8 +258,16 @@ where
 /// sometimes empty renders one text rather than two.
 ///
 /// `is_empty()` is a sound test for "this is a value list, and it has no
-/// values": [`Subselect`] answers `false` unconditionally, so only a `Many`
-/// can ever report `true` here.
+/// values": [`Subselect`](crate::expression::subselect::Subselect) answers
+/// `false` unconditionally, so only a `Many` can ever report `true` here.
+///
+/// `!is_array()` is the same guard [`Many`]'s impl carries, and it has to be
+/// on both or on neither. `Many` falls back to the ANSI rendering for an
+/// array element type, which for an *empty* list renders nothing at all — so
+/// an `In` that took the branch below over a list `Many` had declined would
+/// emit `left IN ()`, a syntax error. Turso has no array types, so neither
+/// guard fires today; they are here so that the pair cannot disagree if that
+/// stops being true.
 impl<T, U> QueryFragment<Turso, TursoJsonArrayComparison> for In<T, U>
 where
     T: QueryFragment<Turso>,
@@ -266,7 +275,10 @@ where
     Turso: HasSqlType<U::SqlType>,
 {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Turso>) -> QueryResult<()> {
-        if self.values.is_empty() && decode_expr::<U::SqlType>().is_some() {
+        if self.values.is_empty()
+            && !self.values.is_array()
+            && decode_expr::<U::SqlType>().is_some()
+        {
             self.left.walk_ast(out.reborrow())?;
             out.push_sql(" IN (");
             self.values.walk_ast(out.reborrow())?;
@@ -285,7 +297,10 @@ where
     Turso: HasSqlType<U::SqlType>,
 {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Turso>) -> QueryResult<()> {
-        if self.values.is_empty() && decode_expr::<U::SqlType>().is_some() {
+        if self.values.is_empty()
+            && !self.values.is_array()
+            && decode_expr::<U::SqlType>().is_some()
+        {
             self.left.walk_ast(out.reborrow())?;
             out.push_sql(" NOT IN (");
             self.values.walk_ast(out.reborrow())?;
@@ -316,7 +331,10 @@ where
         // `is_array` guards an element type that is itself an array, which
         // the ANSI path renders element-wise. Turso has no array types, so
         // this is unreachable today; it mirrors the Postgres dialect rather
-        // than assuming that stays true.
+        // than assuming that stays true. `In`/`NotIn` above carry the same
+        // guard, and must: the two decide the same question, and an `In` that
+        // took its empty-list branch over a list this impl had declined would
+        // render `left IN ()`.
         match decode_expr::<ST>() {
             Some(decode) if !self.is_array() => {
                 out.push_sql("SELECT ");
