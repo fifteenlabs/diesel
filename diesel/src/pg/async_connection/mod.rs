@@ -405,7 +405,7 @@ fn prepare_statement_helper<'conn>(
     // but as we usually cache statements anyway
     // this is a fixed one time const
     //
-    // The probleme with not cloning it is that we then cannot express
+    // The problem with not cloning it is that we then cannot express
     // the right result lifetime anymore (at least not easily)
     let sql = sql.to_string();
     CallbackHelper(async move {
@@ -563,7 +563,7 @@ impl AsyncPgConnection {
         self.record_instrumentation(InstrumentationEvent::start_query(&crate::debug_query(
             &query,
         )));
-        // we explicilty descruct the query here before going into the async block
+        // we explicitly descruct the query here before going into the async block
         //
         // That's required to remove the send bound from `T` as we have translated
         // the query type to just a string (for the SQL) and a bunch of bytes (for the binds)
@@ -627,7 +627,7 @@ impl AsyncPgConnection {
                     unresolved_types
                 {
                     // for each unresolved item
-                    // we check whether it's arleady in the cache
+                    // we check whether it's already in the cache
                     // or perform a lookup and insert it into the cache
                     let cache_key = PgMetadataCacheKey::new(
                         schema.as_deref().map(Into::into),
@@ -792,7 +792,7 @@ fn construct_bind_data(query: &dyn QueryFragment<crate::pg::Pg>) -> BindData {
     // queries for that.
     //
     // We apply this workaround to prevent requiring all the diesel
-    // serialization code to beeing async
+    // serialization code to being async
     //
     // We give out constant fake oids here to optimize for the "happy" path
     // without custom type lookup
@@ -805,17 +805,17 @@ fn construct_bind_data(query: &dyn QueryFragment<crate::pg::Pg>) -> BindData {
     let collect_bind_result_0 =
         query.collect_binds(&mut bind_collector_0, &mut metadata_lookup_0, &Pg);
     // we have encountered a custom type oid, so we need to perform more work here.
-    // These oids can occure in two locations:
+    // These oids can occur in two locations:
     //
-    // * In the collected metadata -> relativly easy to resolve, just need to replace them below
-    // * As part of the seralized bind blob -> hard to replace
+    // * In the collected metadata -> relatively easy to resolve, just need to replace them below
+    // * As part of the serialized bind blob -> hard to replace
     //
     // To address the second case, we perform a second run of the bind collector
     // with a different set of fake oids. Then we compare the output of the two runs
     // and use that information to infer where to replace bytes in the serialized output
     if metadata_lookup_0.custom_oid {
-        // we try to get the maxium oid we encountered here
-        // to be sure that we don't accidently give out a fake oid below that collides with
+        // we try to get the maximum oid we encountered here
+        // to be sure that we don't accidentally give out a fake oid below that collides with
         // something
         let mut max_oid = bind_collector_0
             .metadata
