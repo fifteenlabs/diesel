@@ -26,9 +26,14 @@
 //! A spread rather than a handful of hand-picked values: every signed-width
 //! boundary the encoder branches on (±2^7, ±2^15, ±2^23, ±2^31, ±2^47,
 //! i64 extremes) and both sides of each, the literal serials 0 and 1,
-//! floats including the sign-of-zero and subnormal cases, text and blobs at
-//! the lengths where the header-size varint changes width, and NULL in
-//! every slot. Each case runs through three assertions:
+//! floats including the sign-of-zero, subnormal, infinite and NaN cases,
+//! text and blobs at the lengths where the header-size varint changes
+//! width, and NULL in every slot. NaN earns its place twice over: it is the
+//! one value Turso cannot store as a REAL at all, so it is the one case
+//! where following IEEE rather than following Turso *is* the divergence
+//! this file exists to catch — and it went uncovered here for exactly as
+//! long as our encoder got it wrong. Each case runs through three
+//! assertions:
 //!
 //! 1. our bytes equal the bytes Turso wrote for the same value,
 //! 2. our bytes decode back to the value we started from,
@@ -73,6 +78,12 @@ fn integer_cases() -> Vec<i64> {
     v
 }
 
+/// The float edge cases, including the three IEEE values that are not
+/// ordinary numbers. The infinities Turso stores as ordinary serial-7
+/// doubles; NaN it cannot store at all — `Value::from_f64` folds it to NULL
+/// — and leaving NaN out of this list is what let our encoder emit serial 7
+/// for it and diverge from Turso for a value the app can perfectly well
+/// hand us.
 fn real_cases() -> Vec<f64> {
     vec![
         0.0,
@@ -88,7 +99,23 @@ fn real_cases() -> Vec<f64> {
         f64::EPSILON,
         1e308,
         -1e-308,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
     ]
+}
+
+/// The value Turso will hand back for `v`, which is `v` itself except for
+/// NaN: `Value::from_f64` has no NaN to return, so a NaN written on either
+/// side of the wire reads back as NULL. Round-tripping is asserted against
+/// this rather than against the input, because "what we wrote comes back"
+/// means what the *database* can hold, and `NaN == NaN` is false in any
+/// case.
+fn as_turso_stores_it(v: &turso::Value) -> turso::Value {
+    match v {
+        turso::Value::Real(f) if f.is_nan() => turso::Value::Null,
+        other => other.clone(),
+    }
 }
 
 /// Lengths chosen around the points where a TEXT/BLOB serial type — and
@@ -255,6 +282,8 @@ async fn struct_variants_match_struct_pack() -> Result<()> {
     let conn = setup().await?;
     let cases = struct_cases();
     assert!(cases.len() > 40, "the spread is the point of this test");
+    let mut first_id_for_bytes: std::collections::HashMap<Vec<u8>, i64> =
+        std::collections::HashMap::new();
 
     for (i, case) in cases.iter().enumerate() {
         let id = i as i64 + 1;
@@ -282,11 +311,18 @@ async fn struct_variants_match_struct_pack() -> Result<()> {
         else {
             anyhow::bail!("{}: outer column was not a blob", case.label);
         };
-        assert_eq!(decode_record(&inner)?, case.fields, "{}", case.label);
+        let stored: Vec<turso::Value> = case.fields.iter().map(as_turso_stores_it).collect();
+        assert_eq!(decode_record(&inner)?, stored, "{}", case.label);
 
+        // Two cases can legitimately share a row identity: NaN and NULL are
+        // one value on Turso, so `real NaN` and `null in slot 1` write the
+        // same bytes and a lookup answers with whichever landed first. What
+        // the assertion is about is that binding our bytes finds *the* row
+        // those bytes name, so compare against the first id that wrote them.
+        let expected = *first_id_for_bytes.entry(ours.clone()).or_insert(id);
         assert_eq!(
             lookup_by_our_bytes(&conn, &ours).await?,
-            Some(id),
+            Some(expected),
             "{}: binding our bytes did not find the row turso wrote",
             case.label
         );
