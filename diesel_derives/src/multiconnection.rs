@@ -1675,6 +1675,13 @@ fn generate_backend(connection_types: &[ConnectionVariant]) -> TokenStream {
             // `FROM` clause of a join, so there is nothing to dispatch on
             // here and the shared ANSI impl can be used directly.
             type JoinFromClauseSyntax = diesel::internal::derives::multiconnection::sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax;
+            // Likewise: PostgreSQL, MySQL and SQLite all bind a subselect's
+            // `LIMIT` exactly as they bind a top-level one, so there is
+            // nothing to dispatch on. Only a backend whose planner treats a
+            // placeholder in that position differently — Turso, which
+            // discards it — needs its own answer, and Turso is not a backend
+            // `MultiConnection` can wrap.
+            type SubselectLimitSyntax = diesel::internal::derives::multiconnection::sql_dialect::subselect_limit_syntax::BindSubselectLimit;
             type ExistsSyntax = MultiExistsSyntax;
             type ArrayComparison = MultiArrayComparisonSyntax;
             type ConcatClause = MultiConcatClauseSyntax;
