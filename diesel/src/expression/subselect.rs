@@ -74,6 +74,14 @@ where
     T: QueryFragment<DB>,
 {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        // Tell the pass that everything below here is inside a subselect.
+        // Backends whose SQL is the same either way never look; the ones
+        // that do look need it because a database may accept a construct at
+        // the top level of a statement and not inside a subquery — a bound
+        // `LIMIT` on Turso being the case this exists for. `out` is ours by
+        // value, so the mark reaches this subselect's fragments and nothing
+        // that follows it.
+        out.enter_subselect();
         self.values.walk_ast(out.reborrow())?;
         Ok(())
     }

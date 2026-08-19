@@ -246,6 +246,24 @@ pub trait SqlDialect: self::private::TrustedBackend {
         doc = "See [`sql_dialect::from_clause_syntax`] for provided default implementations"
     )]
     type EmptyFromClauseSyntax;
+    /// Configures how this backend renders the `FROM` clause of a join
+    /// carrying an `ON` condition.
+    ///
+    /// This selects between diesel's [`QueryFragment`](crate::query_builder::QueryFragment)
+    /// implementations for `JoinFromClause`, the fragment every
+    /// `inner_join`/`left_join` renders its joined sources through.
+    ///
+    /// Most backends wrap the joined tables and their `ON` condition in
+    /// parentheses, which is what the ANSI variant does. Some SQLite-derived
+    /// engines only accept a bare table name or subquery where a
+    /// parenthesized join group would go, and need the unparenthesized
+    /// variant instead.
+    ///
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::join_from_clause_syntax`] for provided default implementations"
+    )]
+    type JoinFromClauseSyntax;
     /// Configures how this backend handles `EXISTS()` expressions.
     ///
     /// This allows backends to provide a custom [`QueryFragment`](crate::query_builder::QueryFragment)
@@ -341,6 +359,24 @@ pub trait SqlDialect: self::private::TrustedBackend {
         doc = "See [`sql_dialect::built_in_window_function_require_order`] for provided default implementations"
     )]
     type BuiltInWindowFunctionRequireOrder;
+
+    /// Configures how this backend renders the value of a `LIMIT` clause that
+    /// sits inside a subselect.
+    ///
+    /// Every backend diesel ships binds it, the same as a top-level `LIMIT`.
+    /// A backend needs its own answer here only if its planner treats a
+    /// placeholder in that position differently from one anywhere else — see
+    #[cfg_attr(
+        feature = "turso",
+        doc = "[`Turso`](crate::turso::Turso), whose planner discards it."
+    )]
+    #[cfg_attr(not(feature = "turso"), doc = "the Turso backend.")]
+    ///
+    #[cfg_attr(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+        doc = "See [`sql_dialect::subselect_limit_syntax`] for provided default implementations"
+    )]
+    type SubselectLimitSyntax;
 }
 
 /// This module contains all options provided by diesel to configure the [`SqlDialect`] trait.
@@ -534,6 +570,42 @@ pub(crate) mod sql_dialect {
     }
 
     /// This module contains all reusable options to configure
+    /// [`SqlDialect::JoinFromClauseSyntax`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    // Written `pub` (unlike `from_clause_syntax` above) because the
+    // `MultiConnection` derive names `AnsiSqlJoinFromClauseSyntax` in the
+    // `SqlDialect` impl it generates in downstream crates, which don't
+    // enable the third-party-backend feature.
+    pub mod join_from_clause_syntax {
+
+        /// Indicates that this backend wraps the joined tables and the
+        /// `ON` condition of a join in parentheses, as in
+        /// `FROM ("a" INNER JOIN "b" ON ("a"."id" = "b"."a_id"))`
+        #[derive(Debug, Copy, Clone)]
+        pub struct AnsiSqlJoinFromClauseSyntax;
+
+        /// Indicates that this backend cannot parse a parenthesized join
+        /// group in a `FROM` clause and wants the joined tables and the
+        /// `ON` condition emitted bare, as in
+        /// `FROM "a" INNER JOIN "b" ON ("a"."id" = "b"."a_id")`
+        ///
+        /// The two forms are equivalent for the joins diesel builds by
+        /// chaining `inner_join`/`left_join` on a single query source,
+        /// because SQL joins associate to the left and an `ON` condition
+        /// binds to the nearest join. They are *not* equivalent when a join
+        /// appears on the right-hand side of another join
+        /// (`a.left_join(b.inner_join(c))`): there the parentheses carry
+        /// meaning, and a backend selecting this variant emits SQL its own
+        /// parser will reject. Such a backend cannot express nested joins
+        /// at all — the parenthesized form it would need is exactly what it
+        /// cannot parse — so the failure is a loud one either way.
+        #[derive(Debug, Copy, Clone)]
+        pub struct UnparenthesizedJoinFromClauseSyntax;
+    }
+
+    /// This module contains all reusable options to configure
     /// [`SqlDialect::ExistsSyntax`]
     #[diesel_derives::__diesel_public_if(
         feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
@@ -610,6 +682,24 @@ pub(crate) mod sql_dialect {
         /// Indicates that this backend supports aggregate function expressions similar to PostgreSQL
         #[derive(Debug, Copy, Clone)]
         pub struct PostgresLikeAggregateFunctionExpressions;
+
+        /// Indicates that this backend supports `FILTER (WHERE …)` on an
+        /// aggregate function but *not* an `ORDER BY` inside its argument
+        /// list.
+        ///
+        /// The two clauses are separate SQL features and an engine can have
+        /// one without the other; [`PostgresLikeAggregateFunctionExpressions`]
+        /// gates both together, so a backend that picked it to get `FILTER`
+        /// also got `aggregate_order` — which then compiles and fails at run
+        /// time. Turso is such an engine today: it parses `FILTER` and
+        /// answers `ORDER BY` inside an aggregate with "Parse error: ORDER BY
+        /// clause is not supported yet in aggregate functions".
+        ///
+        /// Selecting this makes `AggregateExpressionMethods::aggregate_order`
+        /// a *compile* error for the backend, which is the whole point: a
+        /// dialect marker exists to move an engine's limits to build time.
+        #[derive(Debug, Copy, Clone)]
+        pub struct FilterOnlyAggregateFunctionExpressions;
     }
 
     /// This module contains all reusable options to configure [`SqlDialect::WindowFrameExclusionSupport`]
@@ -636,6 +726,19 @@ pub(crate) mod sql_dialect {
         /// for built-in window functions
         #[derive(Debug, Copy, Clone)]
         pub struct NoOrderRequired;
+    }
+
+    /// This module contains all reusable options to configure
+    /// [`SqlDialect::SubselectLimitSyntax`]
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    pub mod subselect_limit_syntax {
+        /// Indicates that this backend accepts a bind parameter as the value
+        /// of a `LIMIT` inside a subselect, exactly as it does at the top
+        /// level of a statement.
+        #[derive(Debug, Copy, Clone)]
+        pub struct BindSubselectLimit;
     }
 }
 

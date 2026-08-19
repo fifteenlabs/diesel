@@ -313,6 +313,29 @@ pub mod mysql;
 pub mod pg;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+#[cfg(feature = "turso")]
+pub mod turso;
+
+// The async half of the crate, which used to be the separate `diesel-async`.
+// The connection traits live in `connection` and the query-running trait in
+// `query_dsl`, beside their sync counterparts; what is left over needs a
+// module of its own and gets one here. `async` is the umbrella feature every
+// async backend turns on — it carries the futures dependencies and nothing
+// else, so a sync-only build never compiles them.
+#[cfg(feature = "async-connection-wrapper")]
+pub mod async_connection_wrapper;
+#[cfg(feature = "async-pool")]
+pub mod pooled_connection;
+#[cfg(feature = "sync-connection-wrapper")]
+pub mod sync_connection_wrapper;
+
+/// Re-exported so that `conn.transaction(|c| async { … }.scope_boxed())`
+/// needs `diesel` in scope and nothing else. Callers reach for
+/// [`scoped_futures::ScopedFutureExt`] on every transaction they write, and
+/// before the fold every one of them carried a `scoped-futures` dependency
+/// whose version had to be kept in step with `diesel-async`'s by hand.
+#[cfg(feature = "async")]
+pub use scoped_futures;
 
 #[macro_use]
 mod reexport_ambiguities;
@@ -328,6 +351,9 @@ pub use diesel_derives::{
 };
 
 pub use diesel_derives::MultiConnection;
+
+#[cfg(feature = "turso")]
+pub use diesel_derives::{UnionSchema, UnionStructPayload};
 
 pub mod dsl {
     //! Includes various helper types and bare functions which are named too
@@ -360,6 +386,58 @@ pub mod dsl {
     #[cfg(feature = "postgres_backend")]
     #[doc(inline)]
     pub use crate::pg::expression::extensions::TablesampleDsl;
+}
+
+#[cfg(feature = "async")]
+pub mod async_dsl {
+    //! The async counterparts of [`RunQueryDsl`](crate::RunQueryDsl) and
+    //! [`SaveChangesDsl`](crate::query_dsl::SaveChangesDsl), which are named
+    //! too much like them to be included in the prelude.
+    //!
+    //! # Why these keep the sync names, when the connection traits did not
+    //!
+    //! Folding `diesel-async` into this crate renamed
+    //! `TransactionManager` to [`AsyncTransactionManager`] and
+    //! `AnsiTransactionManager` to [`AnsiAsyncTransactionManager`], because
+    //! the sync traits of those names are declared in the same module and
+    //! two items cannot share one path. The plan was to rename
+    //! `RunQueryDsl` the same way and put both in the prelude, so that
+    //! `use diesel::prelude::*` was the only import a caller needed.
+    //!
+    //! That does not work, and the reason is worth writing down because the
+    //! obvious reading of the situation is the wrong one.
+    //!
+    //! Both `RunQueryDsl`s are blanket-implemented —
+    //! `impl<T, Conn> RunQueryDsl<Conn> for T` on either side. When two
+    //! traits are in scope and both are implemented for the receiver, Rust
+    //! reports the method call as ambiguous ([E0034]); it does not use the
+    //! traits' `where` clauses to break the tie, because candidate
+    //! collection happens before that. So with both traits in scope *every*
+    //! `.execute(conn)`, `.load(conn)` and `.get_result(conn)` in the
+    //! program stops compiling — including, when this was first tried, one
+    //! inside diesel's own `query_dsl` module.
+    //!
+    //! Keeping the name is what avoids it. An explicit
+    //! `use diesel::async_dsl::RunQueryDsl;` *shadows* the `RunQueryDsl`
+    //! that `use diesel::prelude::*` brought in, so exactly one trait of
+    //! that name is ever in scope and the ambiguity never arises. The
+    //! shadowing is load-bearing, not accidental.
+    //!
+    //! It is also not the hazard it looks like. Forgetting the import does
+    //! not silently select the sync trait and drop an un-awaited query:
+    //! [`RunQueryDsl::execute`](crate::RunQueryDsl::execute) requires
+    //! `Conn: Connection`, which no async connection implements, so the
+    //! call fails to compile. The compiler catches it either way; what the
+    //! shadowing buys is that the *right* one compiles.
+    //!
+    //! [E0034]: https://doc.rust-lang.org/error_codes/E0034.html
+    //! [`AsyncTransactionManager`]: crate::connection::AsyncTransactionManager
+    //! [`AnsiAsyncTransactionManager`]: crate::connection::AnsiAsyncTransactionManager
+
+    #[doc(inline)]
+    pub use crate::query_dsl::async_run_query_dsl::{
+        methods, return_futures, RunQueryDsl, SaveChangesDsl, UpdateAndFetchResults,
+    };
 }
 
 pub mod helper_types {
@@ -722,6 +800,24 @@ pub mod prelude {
     pub use crate::associations::{Associations, GroupedBy, Identifiable};
     #[doc(inline)]
     pub use crate::connection::Connection;
+    // Nothing async is re-exported here. Not `AsyncConnection`, not
+    // `SimpleAsyncConnection`, not `AsyncRunQueryDsl` — import them from
+    // `crate::connection` and `crate::async_dsl`, which is one rule with no
+    // exceptions to remember.
+    //
+    // The rule is not squeamishness. `RunQueryDsl` cannot be here because
+    // both versions are blanket-implemented and having both in scope makes
+    // every `.execute(conn)` ambiguous; that much is in `crate::async_dsl`.
+    // The connection traits look safe by comparison — `Connection` has no
+    // blanket impl, so for most types exactly one of the pair applies — but
+    // that reasoning has a hole, and the hole is a real type:
+    // `AsyncConnectionWrapper` implements the *sync* `Connection` and
+    // `SimpleConnection` over an inner connection that is async, which is
+    // the entire point of it. Generic code over that wrapper sees both
+    // `SimpleConnection::batch_execute` and `SimpleAsyncConnection::batch_execute`
+    // and cannot choose. It is a compile error rather than a silent one, but
+    // it is a compile error in code that did nothing wrong, and it appeared
+    // the first time this was tried on a real migration runner.
     #[doc(inline)]
     pub use crate::deserialize::{Queryable, QueryableByName};
     #[doc(inline)]

@@ -24,6 +24,12 @@ dotenvy = "0.15"
 cfg-if = "1.0.0"
 tempfile = "3.2"
 
+# `AsyncMigrationHarness` runs the sync migration machinery inside
+# `block_in_place`, so it needs the runtime that provides it.
+[dependencies.tokio]
+version = "1.26"
+optional = true
+
 [dependencies.diesel]
 version = "~2.3.0"
 path = "../diesel"
@@ -31,6 +37,13 @@ default-features = false
 
 [features]
 default = []
+# `AsyncMigrationHarness`, which runs migrations over an async connection by
+# way of `diesel::async_connection_wrapper`. It lives here rather than in
+# `diesel` because it implements *this* crate's `MigrationHarness`, and
+# `diesel` cannot depend on `diesel_migrations` — the folded-in async code
+# was the only thing that ever wanted to, which is why it is the one piece
+# that did not move into `diesel`.
+async = ["diesel/async-connection-wrapper", "dep:tokio", "tokio/rt-multi-thread"]
 sqlite = []
 postgres = []
 mysql = []

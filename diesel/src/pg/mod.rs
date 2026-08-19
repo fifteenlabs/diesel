@@ -68,3 +68,12 @@ pub mod data_types {
 
 #[doc(inline)]
 pub use self::types::sql_types;
+
+// The async connection for this backend, which used to be `diesel-async`'s
+// own `pg` module. It is a submodule rather than a peer
+// so that everything that speaks this backend is reachable from one path.
+#[cfg(feature = "async-postgres")]
+pub mod async_connection;
+#[cfg(feature = "async-postgres")]
+#[doc(inline)]
+pub use self::async_connection::AsyncPgConnection;

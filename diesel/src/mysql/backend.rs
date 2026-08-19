@@ -83,6 +83,7 @@ impl SqlDialect for Mysql {
     type DefaultValueClauseForInsert = MysqlStyleDefaultValueClause;
 
     type EmptyFromClauseSyntax = sql_dialect::from_clause_syntax::AnsiSqlFromClauseSyntax;
+    type JoinFromClauseSyntax = sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax;
     type SelectStatementSyntax = sql_dialect::select_statement_syntax::AnsiSqlSelectStatement;
 
     type ExistsSyntax = sql_dialect::exists_syntax::AnsiSqlExistsSyntax;
@@ -101,6 +102,7 @@ impl SqlDialect for Mysql {
         sql_dialect::aggregate_function_expressions::NoAggregateFunctionExpressions;
 
     type BuiltInWindowFunctionRequireOrder = MysqlRequiresOrderForWindowFunctions;
+    type SubselectLimitSyntax = sql_dialect::subselect_limit_syntax::BindSubselectLimit;
 }
 
 impl DieselReserveSpecialization for Mysql {}

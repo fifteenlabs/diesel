@@ -30,6 +30,13 @@ where
 {
     internals: AstPassInternals<'a, 'b, DB>,
     backend: &'b DB,
+    /// Whether everything rendered through this pass sits inside a
+    /// subselect. See [`AstPass::enter_subselect`] for why a backend would
+    /// want to know, and why this is a field of the pass rather than of any
+    /// one of its variants: the answer has to be the same in the SQL pass
+    /// and the bind pass, or the two disagree about how many placeholders
+    /// the statement has.
+    in_subselect: bool,
 }
 
 impl<'a, 'b, DB> AstPass<'a, 'b, DB>
@@ -45,6 +52,7 @@ where
         AstPass {
             internals: AstPassInternals::ToSql(query_builder, options),
             backend,
+            in_subselect: false,
         }
     }
 
@@ -59,6 +67,7 @@ where
                 metadata_lookup,
             },
             backend,
+            in_subselect: false,
         }
     }
 
@@ -66,6 +75,7 @@ where
         AstPass {
             internals: AstPassInternals::IsSafeToCachePrepared(result),
             backend,
+            in_subselect: false,
         }
     }
 
@@ -76,6 +86,7 @@ where
         AstPass {
             internals: AstPassInternals::DebugBinds(formatter),
             backend,
+            in_subselect: false,
         }
     }
 
@@ -87,6 +98,7 @@ where
         AstPass {
             internals: AstPassInternals::IsNoop(result),
             backend,
+            in_subselect: false,
         }
     }
 
@@ -103,6 +115,39 @@ where
         if let AstPassInternals::ToSql(_, ref mut options) = self.internals {
             options.skip_from = value
         }
+    }
+
+    /// Mark everything rendered from this point down as sitting inside a
+    /// subselect — `(SELECT …)` used as an expression, whether that is a
+    /// scalar comparison, an `IN`, or an `EXISTS`.
+    ///
+    /// Called by the `Subselect` AST node itself, so no backend has to
+    /// arrange for it. The flag rides the pass rather than the query
+    /// builder, so it is visible to every pass — SQL, binds, cacheability
+    /// and debug alike — which is what keeps the passes agreeing on how
+    /// many placeholders a statement has. It is set on a copy of the pass
+    /// (see [`AstPass::reborrow`]), so it applies to the subselect's own
+    /// fragments and to nothing that follows it.
+    ///
+    /// A backend that renders nothing differently inside a subselect never
+    /// reads it.
+    pub(crate) fn enter_subselect(&mut self) {
+        self.in_subselect = true;
+    }
+
+    /// Whether this pass is rendering the inside of a subselect.
+    ///
+    /// See [`AstPass::enter_subselect`]. The Turso backend reads this to
+    /// decide whether a `LIMIT` may be a bind parameter.
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    #[cfg(any(
+        feature = "turso",
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    ))]
+    pub(crate) fn is_in_subselect(&self) -> bool {
+        self.in_subselect
     }
 
     /// Call this method whenever you pass an instance of `AstPass` by value.
@@ -136,6 +181,7 @@ where
         AstPass {
             internals,
             backend: self.backend,
+            in_subselect: self.in_subselect,
         }
     }
 
@@ -437,6 +483,7 @@ where
         AstPass {
             internals: casted_pass,
             backend: convert_backend(self.backend),
+            in_subselect: self.in_subselect,
         }
     }
 

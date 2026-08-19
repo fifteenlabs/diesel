@@ -42,6 +42,16 @@ include = ["src/**/*.rs", "tests/**/*.rs", "LICENSE-*", "README.md"]
 edition = "2021"
 
 [workspace.dependencies]
+# Must stay spelled exactly as the consuming workspace spells it: cargo keys a
+# git source on URL + ref, and two different specs mean two `turso` crates in
+# one graph, whose `turso::Value` types are not the same type.
+turso = { git = "https://github.com/tursodatabase/turso", branch = "main", default-features = false, features = ["pure-rust-crypto"] }
+# Turso's own lexer, for the one question `#[derive(UnionSchema)]` has to ask
+# it at expansion time: is this member name a keyword, and therefore stored
+# quoted? Same URL and ref as `turso` above so the two resolve to one source
+# and one commit — the keyword list the derive consults is then, by
+# construction, the list the engine it is generating SQL for uses.
+turso_parser = { git = "https://github.com/tursodatabase/turso", branch = "main", default-features = false }
 libsqlite3-sys = ">=0.30.1,<0.36.0"
 pq-sys = ">=0.6,<0.8"
 openssl-sys = "0.9.100"

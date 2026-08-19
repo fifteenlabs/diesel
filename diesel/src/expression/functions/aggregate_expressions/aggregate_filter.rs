@@ -45,6 +45,30 @@ where
     }
 }
 
+/// `FILTER (WHERE …)` renders identically for a backend that has the clause
+/// but not `ORDER BY` inside an aggregate. The impl is repeated rather than
+/// made generic over the marker because the marker *is* the type parameter
+/// these impls are selected by; there is no bound that names both without
+/// naming every other dialect too. `Order<E, false>` deliberately has no
+/// counterpart in `aggregate_order.rs`, which is what turns `aggregate_order`
+/// into a compile error for such a backend.
+impl<P, DB>
+    QueryFragment<
+        DB,
+        sql_dialect::aggregate_function_expressions::FilterOnlyAggregateFunctionExpressions,
+    > for Filter<P>
+where
+    P: QueryFragment<DB>,
+    DB: Backend + SqlDialect<AggregateFunctionExpressions = sql_dialect::aggregate_function_expressions::FilterOnlyAggregateFunctionExpressions>,
+{
+    fn walk_ast<'b>(&'b self, mut pass: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        pass.push_sql(" FILTER (");
+        self.0.walk_ast(pass.reborrow())?;
+        pass.push_sql(")");
+        Ok(())
+    }
+}
+
 pub trait FilterDsl<P> {
     type Output;
 

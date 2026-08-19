@@ -62,6 +62,7 @@ impl SqlDialect for Sqlite {
     type DefaultValueClauseForInsert = sql_dialect::default_value_clause::AnsiDefaultValueClause;
 
     type EmptyFromClauseSyntax = sql_dialect::from_clause_syntax::AnsiSqlFromClauseSyntax;
+    type JoinFromClauseSyntax = sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax;
     type SelectStatementSyntax = sql_dialect::select_statement_syntax::AnsiSqlSelectStatement;
 
     type ExistsSyntax = sql_dialect::exists_syntax::AnsiSqlExistsSyntax;
@@ -76,6 +77,7 @@ impl SqlDialect for Sqlite {
         sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpressions;
     type BuiltInWindowFunctionRequireOrder =
         sql_dialect::built_in_window_function_require_order::NoOrderRequired;
+    type SubselectLimitSyntax = sql_dialect::subselect_limit_syntax::BindSubselectLimit;
 }
 
 impl DieselReserveSpecialization for Sqlite {}

@@ -25,6 +25,14 @@ extend-ignore-re = [
     "tipe",
     # we use this often in place of the reserved type identifier
     "tpe",
+    # Signal's ACI (account identifier); always a field or column name
+    "[a-z_]*\\baci\\b",
+    # short for "literals" in the derive's generated-token identifiers
+    "[a-z_]*_lits\\b",
+    # the English prefix, as in "mis-grouping" / "mis_remembered"
+    "mis[-_][a-z]",
+    # a deliberately truncated compiler message in an expected-error comment
+    "ype mismatch resolving",
 ]
 
 [type.md]

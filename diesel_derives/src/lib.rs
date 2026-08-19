@@ -25,6 +25,8 @@ extern crate syn;
 use proc_macro::TokenStream;
 use sql_function::ExternSqlBlock;
 use syn::parse_quote;
+#[cfg(feature = "turso")]
+use syn::{parse_macro_input, DeriveInput};
 
 mod attrs;
 mod deprecated;
@@ -53,6 +55,8 @@ mod sql_type;
 mod table;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "turso")]
+mod turso_union;
 mod valid_grouping;
 
 /// Implements `AsChangeset`
@@ -2686,4 +2690,36 @@ fn derive_has_query_inner(input: proc_macro2::TokenStream) -> proc_macro2::Token
     syn::parse2(input)
         .and_then(has_query::derive)
         .unwrap_or_else(syn::Error::into_compile_error)
+}
+
+/// Derive the Turso UNION schema for an enum.
+///
+/// Emits [`diesel::turso::union::UnionSchema`], the `CREATE TYPE … AS
+/// UNION(…)` DDL that declares it, and the `ToSql`/`FromSql` pair that
+/// moves it over the wire as a tagged blob. See the module docs on
+/// `diesel::turso::union` for the wire format and for why variant and
+/// field *order* is load-bearing.
+#[cfg(feature = "turso")]
+#[proc_macro_derive(UnionSchema, attributes(union))]
+pub fn derive_union_schema(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match turso_union::expand_union_schema(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Derive `UnionStructPayload` for a plain struct with named fields.
+///
+/// Pairs with `#[union(boxed)]` on a [`UnionSchema`] variant, which keeps a
+/// wide variant behind one pointer instead of inlining its fields into the
+/// enum.
+#[cfg(feature = "turso")]
+#[proc_macro_derive(UnionStructPayload, attributes(union))]
+pub fn derive_union_struct_payload(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match turso_union::expand_struct_payload(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
 }
