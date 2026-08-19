@@ -132,12 +132,16 @@ diesel_migrations = { path = "../diesel_migrations", features = ["async"] }
 # The Turso backend's acceptance suite. `chrono` and `gpui` are here rather
 # than in `required-features`' spirit of "the feature under test" because
 # two of the modules cover Turso's handling of those types; `turso` alone
-# builds and runs everything else.
+# builds and runs everything else. `bb8` and `deadpool` are here for the same
+# reason and one more: the bounds on their connection managers are only
+# checked where the manager is instantiated, so a module that names
+# `TursoConnection` as the pooled type is the only thing that can prove the
+# backend is poolable at all.
 [[test]]
 name = "turso"
 path = "tests/turso/main.rs"
 harness = true
-required-features = ["turso", "chrono", "gpui"]
+required-features = ["turso", "chrono", "gpui", "bb8", "deadpool"]
 
 [features]
 default = ["with-deprecated", "32-column-tables"]
