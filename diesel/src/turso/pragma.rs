@@ -27,8 +27,13 @@ use crate::turso::backend::Turso;
 ///
 /// Per *connection*, not per database: SQLite and Turso both default it to
 /// off, and a connection that forgets it silently accepts writes that
-/// violate every `REFERENCES` in the schema. Run it right after
-/// `establish`, before the connection is handed to anything.
+/// violate every `REFERENCES` in the schema.
+///
+/// Establishing a connection already runs `ON` — see
+/// [`TursoConnection::establish_for_migrations`](crate::turso::TursoConnection::establish_for_migrations)
+/// for the single door that doesn't — so a caller reaching for this is
+/// either turning enforcement *off* around a table rebuild, or turning it
+/// back on afterwards. Both spellings exist for that pair.
 pub fn foreign_keys(enabled: bool) -> ForeignKeys {
     ForeignKeys { enabled }
 }
@@ -39,10 +44,28 @@ pub struct ForeignKeys {
     enabled: bool,
 }
 
+impl ForeignKeys {
+    /// The statement as text.
+    ///
+    /// Exists because [`TursoConnection::open`](crate::turso::TursoConnection)
+    /// runs this pragma before the connection is handed to anyone, and runs it
+    /// through `batch_execute` rather than the DSL: a statement executed the
+    /// normal way is offered to the statement cache, and one that runs exactly
+    /// once per connection would then hold a cache slot for the life of the
+    /// connection and show up in every measurement of what the cache admitted.
+    /// Both spellings of the text come from here, so they cannot drift.
+    pub(crate) const fn sql(self) -> &'static str {
+        if self.enabled {
+            "PRAGMA foreign_keys = ON"
+        } else {
+            "PRAGMA foreign_keys = OFF"
+        }
+    }
+}
+
 impl QueryFragment<Turso> for ForeignKeys {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Turso>) -> crate::QueryResult<()> {
-        out.push_sql("PRAGMA foreign_keys = ");
-        out.push_sql(if self.enabled { "ON" } else { "OFF" });
+        out.push_sql(self.sql());
         Ok(())
     }
 }

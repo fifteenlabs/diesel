@@ -415,7 +415,8 @@ impl TursoConnection {
         &self.conn
     }
 
-    /// Open a Turso connection, optionally enabling multiprocess WAL.
+    /// Open a Turso connection, optionally enabling multiprocess WAL and
+    /// foreign-key enforcement.
     ///
     /// Multiprocess WAL lets a second process (the `fifteen db` CLI) read a
     /// database while the app holds it open. The current turso build has a
@@ -423,7 +424,16 @@ impl TursoConnection {
     /// databases with "shared WAL frame ids must increase monotonically", so
     /// single-process stores opt out. In-memory backends (`:memory:` or an
     /// empty path) reject the flag, so it's never set for them.
-    async fn open(database_url: &str, multiprocess_wal: bool) -> ConnectionResult<Self> {
+    ///
+    /// `foreign_keys` is what every caller but the migration runner wants —
+    /// see [`Self::establish_for_migrations`] for the one that doesn't, and
+    /// the paragraph below for why the default is not "whatever the engine
+    /// does".
+    async fn open(
+        database_url: &str,
+        multiprocess_wal: bool,
+        foreign_keys: bool,
+    ) -> ConnectionResult<Self> {
         let is_in_memory = database_url.is_empty() || database_url == ":memory:";
         let mut builder = turso::Builder::new_local(database_url)
             .experimental_strict(true)
@@ -435,13 +445,33 @@ impl TursoConnection {
         }
         let db = builder.build().await.map_err(turso_to_connection)?;
         let conn = db.connect().map_err(turso_to_connection)?;
-        Ok(Self {
+        let mut conn = Self {
             conn,
             _db: db,
             transaction_state: AnsiAsyncTransactionManager::default(),
             instrumentation: None,
             statement_cache: StatementCache::default(),
-        })
+        };
+
+        // `PRAGMA foreign_keys` is per *connection*, and Turso — like SQLite —
+        // defaults it off. A connection that never runs it accepts writes that
+        // violate every `REFERENCES` in the schema, silently, for as long as it
+        // lives; the symptom is orphan rows nobody notices for a month. That
+        // makes "did this call site remember?" the wrong question to have to
+        // ask, so establishing a connection answers it here instead. The
+        // pragma has no transaction to be a no-op inside at this point, and it
+        // costs one statement per connection.
+        //
+        // Run as a batch rather than through the DSL: `execute` offers the
+        // statement to the cache, and this one runs once per connection, so it
+        // would hold a slot for ever and land in every count of what the cache
+        // admitted — including the perf runner's.
+        if foreign_keys {
+            conn.batch_execute(crate::turso::pragma::foreign_keys(true).sql())
+                .await
+                .map_err(crate::ConnectionError::CouldntSetupConfiguration)?;
+        }
+        Ok(conn)
     }
 
     /// Establish a single-process connection, with multiprocess WAL disabled.
@@ -453,7 +483,43 @@ impl TursoConnection {
     /// `fifteen db` CLI can read it live. (The CLI can still query the
     /// single-process stores while the app is closed.)
     pub async fn establish_single_process(database_url: &str) -> ConnectionResult<Self> {
-        Self::open(database_url, false).await
+        Self::open(database_url, false, true).await
+    }
+
+    /// Establish a connection for a schema-migration run, with foreign keys
+    /// left *off*.
+    ///
+    /// This is the one caller that wants the engine's own default rather than
+    /// the enforced connection [`establish`](AsyncConnection::establish) and
+    /// [`establish_single_process`](Self::establish_single_process) hand out,
+    /// and it wants it for a reason that outlives any single migration.
+    ///
+    /// A schema change SQLite cannot make in place — altering a column type,
+    /// adding `ON UPDATE CASCADE` to a foreign key — is made by rebuilding the
+    /// table: create the replacement, copy the rows across, drop the original,
+    /// rename the replacement into its place. Every step of that is a foreign
+    /// key violation waiting to happen. The original is dropped while children
+    /// still point at it; the replacement is populated before anything it
+    /// references necessarily exists; a `DROP TABLE` under enforcement fires
+    /// `ON DELETE CASCADE` and takes the children with it. That is why the
+    /// twelve-step rebuild in SQLite's own documentation begins by turning
+    /// foreign keys off.
+    ///
+    /// Migrations that need that already say so — `PRAGMA foreign_keys = OFF`
+    /// as their first statement — but the ones that were written and verified
+    /// against an engine that defaults to off may not have had to. Those
+    /// migrations are immutable once shipped: they run, unchanged, on
+    /// databases users already have. Establishing the migration connection
+    /// with enforcement on would change what they do to a live database years
+    /// after they were verified, and the failure would land mid-upgrade, on a
+    /// half-migrated file. So the runner keeps the state those migrations were
+    /// written under, and every *other* connection to the finished database
+    /// enforces.
+    pub async fn establish_for_migrations(
+        database_url: &str,
+        multiprocess_wal: bool,
+    ) -> ConnectionResult<Self> {
+        Self::open(database_url, multiprocess_wal, false).await
     }
 
     /// What the statement cache has admitted, hit and refused so far.
@@ -748,8 +814,9 @@ impl AsyncConnection for TursoConnection {
         // meta.db keeps multiprocess WAL enabled so the `fifteen db` CLI can
         // read it while the app runs. Single-process stores (signal.db,
         // whatsapp.db) use `establish_single_process` to dodge the
-        // multiprocess-WAL checkpoint bug.
-        async move { Self::open(&url, true).await }
+        // multiprocess-WAL checkpoint bug. Both enforce foreign keys; only
+        // `establish_for_migrations` does not.
+        async move { Self::open(&url, true, true).await }
     }
 
     fn transaction_state(
