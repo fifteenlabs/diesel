@@ -251,19 +251,79 @@ async fn cached_query_survives_a_schema_change() -> Result<()> {
     Ok(())
 }
 
-/// `eq_any` over a runtime list emits a placeholder per element, so each
-/// length is its own SQL text. It still has to answer for the list it was
-/// given — every length of it — and, more importantly, the lengths must not
-/// each take a slot in a cache that never evicts.
+/// A multi-row insert whose row count varies is a genuinely variadic call
+/// site: `VALUES (?, ?)` and `VALUES (?, ?), (?, ?)` are different texts, and
+/// [`family_of`] collapses their placeholder runs to one key. It still has to
+/// answer for the rows it was given — every count of it — and, more
+/// importantly, the counts must not each take a slot in a cache that never
+/// evicts.
 ///
-/// This is the case recurrence alone could not have handled: a three-element
-/// list recurs perfectly well. What closes the call site is the second
-/// *distinct* length arriving under the same family key.
+/// This is the case recurrence alone could not have handled: a two-row insert
+/// recurs perfectly well. What closes the call site is the second *distinct*
+/// row count arriving under the same family key.
+///
+/// This test used to be written against `eq_any`, which was the app's
+/// canonical variadic shape until the Turso dialect started binding `IN`
+/// lists as one JSON array (see `crate::turso::array_comparison` and
+/// `tests/turso/array_comparison.rs`). `eq_any` is now one text at every
+/// length, so it can no longer exercise the safety net — and the safety net
+/// still matters, because a shape nobody anticipated is exactly what it is
+/// for. Hence the batch insert, which is variadic for a reason the dialect
+/// cannot remove: the values really are one bind each.
 #[tokio::test(flavor = "current_thread")]
-async fn an_in_list_does_not_fill_the_cache_with_its_lengths() -> Result<()> {
+async fn a_variadic_call_site_does_not_fill_the_cache_with_its_lengths() -> Result<()> {
+    let mut conn = TursoConnection::establish(":memory:").await?;
+    conn.batch_execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL) STRICT;")
+        .await?;
+
+    // Every row count, many times over, in an order that repeats each one.
+    let mut next = 0i32;
+    for _ in 0..10 {
+        for count in [1usize, 2, 3, 2, 1] {
+            let rows: Vec<_> = (0..count)
+                .map(|_| {
+                    next += 1;
+                    (t::id.eq(next), t::name.eq(format!("n{next}")))
+                })
+                .collect();
+            let n = diesel::insert_into(t::table)
+                .values(rows)
+                .execute(&mut conn)
+                .await?;
+            assert_eq!(n, count, "the rows it was handed, not the batch before");
+        }
+    }
+
+    let stats = conn.statement_cache_stats();
+    assert_eq!(
+        stats.variadic_families, 1,
+        "all the row counts were recognised as one call site, not one each"
+    );
+    assert!(
+        stats.admitted <= 1,
+        "at most the single row count that recurred before the call site was \
+         recognised — never a slot per count (got {})",
+        stats.admitted
+    );
+    assert_eq!(
+        stats.refused_at_cap, 0,
+        "and nothing was pushed out of the cache to make room for them"
+    );
+    Ok(())
+}
+
+/// The shape that used to be this file's variadic example, asserted from the
+/// other side: an `IN` list is now one text at every length, so it is
+/// admitted once and hit thereafter, and no family is ever closed.
+///
+/// The rendering itself, and the reasons behind it, are covered in
+/// `tests/turso/array_comparison.rs`. What this adds is the cache's own view
+/// of it, next to the shape that is still variadic — the two together are
+/// what say the mechanism is intact *and* no longer catches `eq_any`.
+#[tokio::test(flavor = "current_thread")]
+async fn an_in_list_is_one_text_at_every_length() -> Result<()> {
     let mut conn = seeded().await?;
 
-    // Every length, many times over, in an order that repeats each one.
     for _ in 0..10 {
         for ids in [vec![1], vec![1, 2], vec![2, 3], vec![1, 2, 3], vec![3]] {
             let rows: Vec<i32> = t::table
@@ -278,18 +338,18 @@ async fn an_in_list_does_not_fill_the_cache_with_its_lengths() -> Result<()> {
 
     let stats = conn.statement_cache_stats();
     assert_eq!(
-        stats.variadic_families, 1,
-        "all the lengths were recognised as one call site, not one each"
-    );
-    assert!(
-        stats.admitted <= 1,
-        "at most the single length that recurred before the call site was \
-         recognised — never a slot per length (got {})",
-        stats.admitted
+        stats.variadic_families, 0,
+        "an IN list no longer mints a text per length, so nothing is variadic"
     );
     assert_eq!(
-        stats.refused_at_cap, 0,
-        "and nothing was pushed out of the cache to make room for them"
+        stats.admitted, 1,
+        "one text, admitted once (got {})",
+        stats.admitted
+    );
+    assert!(
+        stats.hits >= 49,
+        "and served from the cache every time after the first (got {} hits)",
+        stats.hits
     );
     Ok(())
 }

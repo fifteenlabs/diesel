@@ -682,3 +682,221 @@ async fn offset_without_limit_plans_like_an_explicit_limit() -> Result<()> {
     assert_no_sorter(&mut conn, &implicit).await?;
     Ok(())
 }
+
+// ── 8. `IN` lists bound as one JSON array ────────────────────────────────
+//
+// The Turso dialect renders `eq_any` as `IN (SELECT … FROM json_each(?))`
+// rather than `IN (?, ?, …)`, so that a list whose length varies is still one
+// SQL text and still cacheable — see `crate::turso::array_comparison`.
+//
+// That rewrite moves the *values* behind a virtual table, and the risk it
+// carries is exactly this file's subject: a planner that materialises
+// `json_each` and then scans the outer table, instead of walking the list and
+// driving the outer table's index with it. The answers would be identical and
+// the cost would not.
+//
+// So each test below asserts the strongest available form of "nothing moved":
+// the plan for the JSON rendering is the plan for the placeholder rendering,
+// character for character, with `LIST SUBQUERY 1 / SCAN json_each` in front of
+// it. That is a stricter claim than "an index is still named" — it also rules
+// out a lost sorter guarantee, a changed join order, and a full scan of the
+// outer table, without having to enumerate them.
+
+/// The placeholder rendering of a query the DSL rendered as a JSON list.
+///
+/// Built by rewriting the JSON subquery back into `n` placeholders, so the two
+/// texts are guaranteed to differ in the `IN` list and nowhere else — which is
+/// what makes comparing their plans meaningful. Hand-writing both would leave
+/// room for them to differ somewhere unnoticed.
+fn as_placeholder_form(sql: &str, n: usize) -> String {
+    let start = sql
+        .find("IN (SELECT ")
+        .expect("query does not render a JSON IN list");
+    let close = sql[start..]
+        .find("json_each(?))")
+        .expect("query does not render a json_each list")
+        + start
+        + "json_each(?))".len();
+    let placeholders = std::iter::repeat_n("?", n).collect::<Vec<_>>().join(", ");
+    format!("{}IN ({placeholders}){}", &sql[..start], &sql[close..])
+}
+
+/// Assert the JSON rendering plans exactly as the placeholder rendering does,
+/// bar the two steps that read the bound list.
+///
+/// `n` is the list length the placeholder form is built at. It does not matter
+/// which length is chosen — that is the property under test everywhere else —
+/// but the planner is given a concrete one so the comparison is against a real
+/// statement rather than a shape.
+async fn assert_plans_like_placeholders<Q>(
+    conn: &mut TursoConnection,
+    query: &Q,
+    n: usize,
+) -> Result<()>
+where
+    Q: diesel::query_builder::QueryFragment<Turso> + diesel::query_builder::QueryId,
+{
+    let json_sql = rendered(query);
+    let ansi_sql = as_placeholder_form(&json_sql, n);
+
+    let json_plan = plan_of(conn, &json_sql).await?;
+    let ansi_plan = plan_of(conn, &ansi_sql).await?;
+
+    let expected = format!("LIST SUBQUERY 1 / SCAN json_each / {ansi_plan}");
+    assert_eq!(
+        json_plan, expected,
+        "binding the IN list as JSON changed the plan.\n  json: {json_sql}\n  ansi: {ansi_sql}"
+    );
+    assert!(
+        !json_plan.contains(SORTER),
+        "and it must not sort: {json_plan}"
+    );
+    Ok(())
+}
+
+/// `plan`, for a statement that is already SQL text.
+async fn plan_of(conn: &mut TursoConnection, sql: &str) -> Result<String> {
+    let steps: Vec<PlanStep> = diesel::sql_query(format!("EXPLAIN QUERY PLAN {sql}"))
+        .load(conn)
+        .await?;
+    Ok(steps
+        .iter()
+        .map(|s| s.detail.as_str())
+        .collect::<Vec<_>>()
+        .join(" / "))
+}
+
+/// An integer list against the leading column of a compound index. The list
+/// decodes as a bare `value`, since integers need no hex.
+#[tokio::test(flavor = "current_thread")]
+async fn an_integer_list_drives_the_index() -> Result<()> {
+    let mut conn = setup().await?;
+
+    let query = messages::table
+        .filter(messages::thread_id.eq_any(vec![1i64, 2, 3]))
+        .select(messages::id);
+
+    assert!(
+        rendered(&query).contains("IN (SELECT value FROM json_each(?))"),
+        "integers decode without unhex: {}",
+        rendered(&query)
+    );
+    assert_uses_index(&mut conn, &query, "messages_by_thread_date").await?;
+    assert_plans_like_placeholders(&mut conn, &query, 3).await?;
+    Ok(())
+}
+
+/// A text list against a unique index. This is the form that decodes through
+/// `CAST(unhex(value) AS TEXT)`, and the plan has to survive the cast — the
+/// cast is on the *value* side of the comparison, so the column stays bare and
+/// the index stays reachable. Putting the decoding on the column side instead
+/// would read almost the same and would lose the index entirely.
+#[tokio::test(flavor = "current_thread")]
+async fn a_text_list_keeps_its_unique_index_through_the_cast() -> Result<()> {
+    let mut conn = setup().await?;
+
+    let query = threads::table
+        .filter(threads::key.eq_any(vec!["k1".to_string(), "k2".to_string()]))
+        .select(threads::id);
+
+    assert!(
+        rendered(&query).contains("IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?))"),
+        "text decodes through unhex: {}",
+        rendered(&query)
+    );
+    assert_uses_index(&mut conn, &query, "threads_by_key").await?;
+    assert_plans_like_placeholders(&mut conn, &query, 2).await?;
+    Ok(())
+}
+
+/// A BLOB list against a primary key — the shape the app's UNION-encoded ids
+/// take, and the one the whole exercise is for. `unhex` is on the JSON side,
+/// so the comparison is still against the raw indexed column.
+#[tokio::test(flavor = "current_thread")]
+async fn a_blob_list_drives_the_primary_key() -> Result<()> {
+    let mut conn = setup_events().await?;
+
+    let query = events::table
+        .filter(events::mid.eq_any(vec![
+            EventKey::Telegram {
+                chat_id: 1,
+                message_id: 1,
+            },
+            EventKey::Telegram {
+                chat_id: 1,
+                message_id: 2,
+            },
+        ]))
+        .select(events::note);
+
+    assert!(
+        rendered(&query).contains("IN (SELECT unhex(value) FROM json_each(?))"),
+        "a UNION blob decodes with unhex and no cast: {}",
+        rendered(&query)
+    );
+    assert_plans_like_placeholders(&mut conn, &query, 2).await?;
+    Ok(())
+}
+
+/// The expression-index shape, which is where this file's original regression
+/// lived. The restriction is not a bare column but
+/// `struct_extract(union_extract(mid, 'telegram'), 'chat_id')`, matched to an
+/// index by comparing resolved expression trees rather than text. Moving the
+/// values behind a vtab must not disturb that matching — and a paged read must
+/// not gain a sorter it did not have.
+#[tokio::test(flavor = "current_thread")]
+async fn a_list_under_an_expression_index_keeps_the_index() -> Result<()> {
+    let mut conn = setup_events().await?;
+
+    let query = events::table
+        .filter(
+            events::mid
+                .extract(event_key::telegram::variant)
+                .field(event_key::telegram::message_id)
+                .eq_any(vec![1i64, 2, 3]),
+        )
+        .filter(
+            events::mid
+                .extract(event_key::telegram::variant)
+                .field(event_key::telegram::chat_id)
+                .eq(1i64),
+        )
+        .select(events::note);
+
+    assert_uses_index(&mut conn, &query, "events_tg").await?;
+    assert_plans_like_placeholders(&mut conn, &query, 3).await?;
+    Ok(())
+}
+
+/// An empty list plans, rather than being a constant the planner folds away.
+///
+/// Under the ANSI rendering an empty `eq_any` is the literal `1=0`; here it is
+/// the same statement as any other length with an empty array bound. That is
+/// the point — one text per call site — but it does mean the empty case now
+/// reaches the planner, so it is worth knowing it produces something sane
+/// rather than, say, a full scan.
+///
+/// Asserted directly rather than against a placeholder form, because there is
+/// no placeholder form to compare with: `IN ()` is a syntax error, which is
+/// the whole reason the ANSI rendering needs its `1=0` special case.
+#[tokio::test(flavor = "current_thread")]
+async fn an_empty_list_still_plans_through_the_index() -> Result<()> {
+    let mut conn = setup().await?;
+
+    let query = messages::table
+        .filter(messages::thread_id.eq_any(Vec::<i64>::new()))
+        .select(messages::id);
+
+    let detail = plan(&mut conn, &query).await?;
+    assert!(
+        detail.contains("messages_by_thread_date"),
+        "an empty list should still be planned as an index-driven lookup, not \
+         a scan of the table it will return nothing from: {detail}"
+    );
+    assert!(
+        !detail.contains("SCAN messages"),
+        "and specifically not a full scan: {detail}"
+    );
+    assert!(!detail.contains(SORTER), "and it must not sort: {detail}");
+    Ok(())
+}

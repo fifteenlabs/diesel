@@ -81,7 +81,14 @@ impl SqlDialect for Turso {
         sql_dialect::join_from_clause_syntax::UnparenthesizedJoinFromClauseSyntax;
     type SelectStatementSyntax = sql_dialect::select_statement_syntax::AnsiSqlSelectStatement;
     type ExistsSyntax = sql_dialect::exists_syntax::AnsiSqlExistsSyntax;
-    type ArrayComparison = sql_dialect::array_comparison::AnsiSqlArrayComparison;
+    // Not the ANSI marker, which is the one place this dialect deliberately
+    // diverges from SQLite's for a reason that is not about parsing. The
+    // ANSI rendering emits one placeholder per list element, so an `eq_any`
+    // over a runtime-length list mints a new SQL text per length — and this
+    // backend's statement cache is keyed by the text. See
+    // [`crate::turso::array_comparison`] for the whole argument, and for why
+    // the TEXT form's `unhex` is load-bearing rather than redundant.
+    type ArrayComparison = TursoJsonArrayComparison;
     type AliasSyntax = sql_dialect::alias_syntax::AsAliasSyntax;
     type WindowFrameClauseGroupSupport =
         sql_dialect::window_frame_clause_group_support::IsoGroupWindowFrameUnit;
@@ -96,6 +103,17 @@ impl SqlDialect for Turso {
     // [`LiteralSubselectLimit`].
     type SubselectLimitSyntax = LiteralSubselectLimit;
 }
+
+/// Marker for [`SqlDialect::ArrayComparison`]: bind an `IN (…)` list as a
+/// single JSON array and unpack it with `json_each`, rather than emitting one
+/// bind per element.
+///
+/// Selecting this is what routes `In`/`NotIn`/`Many` to the impls in
+/// [`crate::turso::array_comparison`]. Because those impls are gated on this
+/// marker, no other backend can reach them: the Postgres, MySQL and SQLite
+/// renderings are untouched by construction, not by convention.
+#[derive(Debug, Copy, Clone)]
+pub struct TursoJsonArrayComparison;
 
 impl DieselReserveSpecialization for Turso {}
 impl TrustedBackend for Turso {}
