@@ -65,7 +65,8 @@ impl SqlDialect for Turso {
     type ConcatClause = sql_dialect::concat_clause::ConcatWithPipesClause;
     type DefaultValueClauseForInsert = sql_dialect::default_value_clause::AnsiDefaultValueClause;
     type EmptyFromClauseSyntax = sql_dialect::from_clause_syntax::AnsiSqlFromClauseSyntax;
-    // The one place the dialect can't mirror SQLite. Diesel renders the
+    // The first of the three places the dialect can't mirror SQLite, and
+    // the one that fails at parse time. Diesel renders the
     // sources and `ON` condition of a join as a parenthesized group —
     // `FROM ("books" INNER JOIN "authors" ON (…))` — which SQLite accepts
     // and Turso's planner rejects outright ("Parenthesized FROM clause
@@ -94,13 +95,25 @@ impl SqlDialect for Turso {
         sql_dialect::window_frame_clause_group_support::IsoGroupWindowFrameUnit;
     type WindowFrameExclusionSupport =
         sql_dialect::window_frame_exclusion_support::FrameExclusionSupport;
+    // The second place the dialect can't mirror SQLite, and the only one
+    // where the obvious marker would have claimed a capability the engine
+    // does not have. One marker gates both halves of diesel's aggregate
+    // syntax — `count(*) FILTER (WHERE …)` and `max(x ORDER BY y)` — and
+    // Turso has the first but not the second: it answers the second with
+    // "Parse error: ORDER BY clause is not supported yet in aggregate
+    // functions", at run time, from a query that compiled. There was no
+    // marker for "FILTER yes, ORDER BY no", so this fork adds one, rather
+    // than taking `PostgresLike…` for the half that works and leaving the
+    // other half to fail in production. `aggregate_order` on a Turso query
+    // is now a compile error; `filter` is unaffected. See
+    // `tests/turso/aggregate_expressions.rs`.
     type AggregateFunctionExpressions =
-        sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpressions;
+        sql_dialect::aggregate_function_expressions::FilterOnlyAggregateFunctionExpressions;
     type BuiltInWindowFunctionRequireOrder =
         sql_dialect::built_in_window_function_require_order::NoOrderRequired;
-    // The second place the dialect can't mirror SQLite, and the one that
-    // fails at run time rather than at parse time. See
-    // [`LiteralSubselectLimit`].
+    // The third place the dialect can't mirror SQLite, and the only one
+    // that survives both the compiler and the parser: it fails at run time.
+    // See [`LiteralSubselectLimit`].
     type SubselectLimitSyntax = LiteralSubselectLimit;
 }
 

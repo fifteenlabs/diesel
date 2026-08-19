@@ -4,7 +4,13 @@
 //! temporary database, so they cost nothing to run together, and one
 //! binary links the (large) query-builder generics once instead of
 //! once per file.
+//!
+//! One module is *not* here: `tests/turso_shared_string.rs` needs `gpui`,
+//! and a `required-features` entry is per target, so naming it here would
+//! make every test in this file unselectable whenever `gpui` fails to
+//! resolve — which it currently does.
 
+mod aggregate_expressions;
 mod array_comparison;
 mod batch_insert;
 mod case_expression;
@@ -15,6 +21,7 @@ mod datetime_storage;
 mod datetime_support;
 mod deserialization_errors;
 mod expr_functions;
+mod foreign_keys;
 mod joins;
 mod limit_offset;
 mod m3_establish_exec;
@@ -25,13 +32,11 @@ mod m7_union_codec;
 mod m8_union_derive;
 mod m9_migrations;
 mod nested_transactions;
-mod pooling;
-mod pragma;
 mod query_plans;
 mod replace_into;
 mod returning_clause;
 mod scalar_union;
-mod shared_string;
+mod sql_text;
 mod statement_cache;
 mod stream_cancellation;
 mod strict_type_support;

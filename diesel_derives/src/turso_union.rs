@@ -154,6 +154,53 @@ use syn::{Attribute, Data, DataStruct, DeriveInput, Fields, Ident, LitStr, Type,
 /// string literal that `Extract` can push as-is and a caller can compare
 /// `union_tag(col)` against — one spelling, no allocation per query, and no
 /// second place for the rule to live.
+///
+/// # The escaping is one-sided, on purpose
+///
+/// The `"` doubling above is Turso's identifier rule. It is *not* the rule
+/// for the context this string is finally pushed into: `Extract::walk_ast`
+/// puts it between single quotes, as `union_extract(col, '…')`, and a `'`
+/// inside would end that literal. Doubling `'` here instead would corrupt
+/// the DDL, where the same string is an identifier — `"it''s"` and `"it's"`
+/// are two different names. So the apostrophe is refused at the source
+/// instead; see [`reject_apostrophe`].
+/// Refuse a name carrying an apostrophe, because [`stored_name`]'s escaping
+/// is one-sided relative to where the result is used.
+///
+/// `stored_name` doubles an embedded `"`, which is right for the DDL —
+/// `CREATE TYPE … AS UNION("we""ird" INT)` — and right for the *name*, since
+/// that is the spelling Turso stores. But the same string is then pushed
+/// between **single** quotes by `Extract::walk_ast` and `GetField::walk_ast`
+/// in `turso::union::expr`, as `union_extract(col, '…')`, and nothing doubles
+/// a `'` on the way. `#[union(tag = "it's")]` would render
+/// `union_extract(col, '"it's"')`, which does not parse.
+///
+/// It could be escaped at the push site instead, but that would mean an
+/// allocation per query to carry a spelling nothing wants: `TAG_NAME` is a
+/// const precisely so the rendering can push it as-is. And there is nothing
+/// to lose by refusing it — a UNION variant is named by a Rust enum variant.
+///
+/// A tag also has to parse as an `Ident` further down, in
+/// `emit_identifier_module`, which happens to exclude `'` as well. That check
+/// is about naming a Rust module, not about SQL, and it would stop covering
+/// this the moment the generated module took its name from the variant's own
+/// ident instead of its tag. So the SQL-shaped rule is stated where it
+/// belongs, with the diagnostic that names the real reason.
+fn reject_apostrophe(name: &str, spanned: &Variant) -> syn::Result<()> {
+    if name.contains('\'') {
+        return Err(syn::Error::new_spanned(
+            spanned,
+            format!(
+                "UnionSchema: tag {name:?} contains an apostrophe. The tag is pushed into \
+                 a SQL string literal — `union_extract(col, '<tag>')` — so a `'` would end \
+                 that literal and the query would not parse. Spell a `#[union(tag = \"…\")]` \
+                 without one"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn stored_name(name: &str) -> String {
     let needs_quoting = name.is_empty()
         || name.as_bytes()[0].is_ascii_digit()
@@ -616,6 +663,7 @@ impl ParsedVariant {
             .tag
             .clone()
             .unwrap_or_else(|| ident.to_string().to_snake_case());
+        reject_apostrophe(&tag, v)?;
         let struct_type = attrs
             .struct_type
             .clone()
@@ -1209,5 +1257,61 @@ mod tests {
         assert_eq!(stored_name("1abc"), r#""1abc""#);
         assert_eq!(stored_name(""), r#""""#);
         assert_eq!(stored_name("we\"ird"), r#""we""ird""#);
+    }
+
+    /// The one character `stored_name` cannot make safe, because the string
+    /// it returns lands inside a *single*-quoted SQL literal and its escaping
+    /// is the double-quote rule. See [`super::reject_apostrophe`].
+    ///
+    /// Note what `stored_name` does with it: it quotes, because `'` is
+    /// outside `[A-Za-z0-9_]`, and leaves the apostrophe alone — so the
+    /// rendering would be `union_extract(col, '"it's"')`, which ends the
+    /// literal three characters early. The derive has to refuse it before
+    /// that.
+    #[test]
+    fn an_apostrophe_in_a_tag_is_refused_at_derive_time() {
+        assert_eq!(
+            stored_name("it's"),
+            "\"it's\"",
+            "stored_name escapes for the DDL, which does nothing for the \
+             single-quoted context the tag is also pushed into"
+        );
+
+        let err = expand(
+            r#"
+            enum K {
+                #[union(tag = "it's")]
+                A(i64),
+            }
+            "#,
+        )
+        .expect_err("a tag with an apostrophe has to be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("apostrophe") && message.contains("union_extract"),
+            "the diagnostic has to name the real reason rather than leaving a \
+             parse error for the first query to hit. Got: {message}"
+        );
+    }
+
+    /// The default path and the attribute path both go through the check, and
+    /// an ordinary tag is untouched by it.
+    #[test]
+    fn an_ordinary_tag_still_expands() {
+        expand(
+            r#"
+            enum K {
+                Telegram { chat_id: i64 },
+                #[union(tag = "whatsapp")]
+                WhatsApp(i64),
+            }
+            "#,
+        )
+        .expect("a union with ordinary tags expands");
+    }
+
+    fn expand(src: &str) -> syn::Result<proc_macro2::TokenStream> {
+        let input: syn::DeriveInput = syn::parse_str(src).expect("test input parses");
+        super::expand_union_schema(&input)
     }
 }
