@@ -20,6 +20,7 @@ use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::connection::AnsiAsyncTransactionManager;
 use crate::connection::{AsyncConnection, AsyncConnectionCore, SimpleAsyncConnection};
 use crate::connection::{CacheSize, Instrumentation};
 use crate::query_builder::{AsQuery, QueryBuilder, QueryFragment, QueryId};
@@ -29,7 +30,6 @@ use futures_util::stream::{self, BoxStream};
 use crate::turso::bind::TursoBindCollector;
 use crate::turso::error::{turso_to_connection, turso_to_diesel};
 use crate::turso::row::TursoRow;
-use crate::turso::transaction::TursoTransactionManager;
 use crate::turso::{Turso, TursoQueryBuilder};
 
 /// Distinct statements one connection will admit into Turso's cache.
@@ -403,7 +403,7 @@ pub struct TursoConnection {
     conn: turso::Connection,
     // Keep the Database alive for the connection's lifetime.
     _db: turso::Database,
-    transaction_state: TursoTransactionManager,
+    transaction_state: AnsiAsyncTransactionManager,
     instrumentation: Option<Box<dyn Instrumentation>>,
     statement_cache: StatementCache,
 }
@@ -438,7 +438,7 @@ impl TursoConnection {
         Ok(Self {
             conn,
             _db: db,
-            transaction_state: TursoTransactionManager::default(),
+            transaction_state: AnsiAsyncTransactionManager::default(),
             instrumentation: None,
             statement_cache: StatementCache::default(),
         })
@@ -515,9 +515,9 @@ where
 /// step can be the cached one. What those two do either side of it — take the
 /// connection's dangling-transaction action first — has nothing to do here:
 /// that action belongs to a dropped `turso::Transaction`, and transactions in
-/// this crate are `BEGIN` / `COMMIT` text emitted by [`TursoTransactionManager`],
-/// so the connection's dangling-transaction state is never anything but
-/// `Ignore`.
+/// this crate are `BEGIN` / `COMMIT` / `SAVEPOINT` text emitted by
+/// [`AnsiAsyncTransactionManager`], so the connection's dangling-transaction
+/// state is never anything but `Ignore`.
 async fn compile(
     conn: &turso::Connection,
     sql: &str,
@@ -539,8 +539,71 @@ impl SimpleAsyncConnection for TursoConnection {
         // `;`-splitter couldn't.
         let query = query.to_owned();
         let conn = self.conn.clone();
-        async move { conn.execute_batch(&query).await.map_err(turso_to_diesel) }
+        let transaction_state = &mut self.transaction_state;
+        async move {
+            let result = conn.execute_batch(&query).await.map_err(turso_to_diesel);
+            if result.is_err() {
+                flag_rollback_if_turso_still_holds_the_transaction(&conn, transaction_state);
+            }
+            result
+        }
     }
+}
+
+/// Tell the transaction manager that a rollback is owed, when Turso says the
+/// transaction that just failed is still open.
+///
+/// This is the Turso half of a contract diesel's other backends also
+/// implement — see the `update_transaction_manager_status` in
+/// `pg/async_connection` and `mysql/async_connection` — but the condition is
+/// a different one, and the case it exists for is the one that hurts most.
+///
+/// Turso does not close a transaction on error. Not on a constraint
+/// violation, not on a parse error, and — the case this function is really
+/// about — *not on a failed `COMMIT`*: `TxOp::Commit` in
+/// `core/vdbe/execute.rs` pre-checks deferred foreign keys and returns early
+/// on a violation, deliberately leaving `auto_commit` false so the caller can
+/// decide what to do. Turso is right to do that, and it means a `COMMIT` that
+/// returns an error has *not* ended the transaction.
+///
+/// Without this, that left the connection in a state nothing could get it out
+/// of. Diesel's depth would come back to zero while Turso still held an open
+/// transaction, so every later statement — plain autocommit writes, the ones
+/// the caller has every reason to think are durable — joined the orphan
+/// instead. They read back correctly on that connection, because they really
+/// are in the transaction, and they are gone the moment it closes. One
+/// long-lived connection, which is exactly how the app's meta database is
+/// used, could quietly lose every write it made after a single deferred-FK
+/// violation.
+///
+/// Setting `requires_rollback_maybe_up_to_top_level` is what routes
+/// [`AnsiAsyncTransactionManager::commit_transaction`] into its repair path:
+/// it rolls back, unwinds the depth, and reports
+/// [`RollbackErrorOnCommit`](crate::result::Error::RollbackErrorOnCommit) if
+/// even that fails, rather than returning to the caller with the database
+/// still mid-transaction.
+///
+/// The `is_autocommit` guard is not belt-and-braces. Turso has one commit
+/// failure that *does* unwind — an abandoned write statement, which triggers
+/// `rollback_manual_txn_cleanup` — and asking for a `ROLLBACK` after that one
+/// would fail with "cannot rollback - no transaction is active" and put the
+/// manager in an error state permanently. So we ask Turso which of the two
+/// happened rather than assuming, and when it has already unwound we leave
+/// the flag alone: the manager then simply drops the depth, and the two
+/// agree again.
+fn flag_rollback_if_turso_still_holds_the_transaction(
+    conn: &turso::Connection,
+    transaction_state: &mut AnsiAsyncTransactionManager,
+) {
+    // A connection too broken to answer is a connection we should not be
+    // guessing about; leaving the flag clear keeps the manager on the path
+    // that emits no further SQL.
+    if conn.is_autocommit().unwrap_or(true) {
+        return;
+    }
+    transaction_state
+        .status
+        .set_requires_rollback_maybe_up_to_top_level(true);
 }
 
 impl AsyncConnectionCore for TursoConnection {
@@ -614,14 +677,71 @@ impl AsyncConnectionCore for TursoConnection {
         Box::pin(async move {
             let Prepared { sql, binds, .. } = prepared?;
             let mut statement = compile(&conn, &sql, cached).await?;
-            let affected = statement.execute(binds).await.map_err(turso_to_diesel)?;
-            Ok(affected as usize)
+            // Step through `query`, not `execute`, and drain whatever comes
+            // back. `turso::Statement::execute` steps with `columns: None`,
+            // and a step that yields a row in that mode is
+            // `Misuse("unexpected row during execution")` — raised *after*
+            // the statement has already run. So `.returning(…).execute()`
+            // and a bare `SELECT … .execute()` both reported an error for a
+            // statement that had taken effect, and a caller that reads `Err`
+            // as "nothing happened" and retries would apply the write twice.
+            // Diesel's other backends return a row count from both, so this
+            // was a Turso-only trap on a completely ordinary query shape.
+            //
+            // Draining costs nothing for the DML case (a `RETURNING`-less
+            // statement yields no rows) and is what makes the count correct
+            // for the rest: `n_change` is only final once the statement has
+            // reached `Done`.
+            let mut rows = statement.query(binds).await.map_err(turso_to_diesel)?;
+            while rows.next().await.map_err(turso_to_diesel)?.is_some() {}
+            Ok(statement.n_change() as usize)
         })
     }
 }
 
 impl AsyncConnection for TursoConnection {
-    type TransactionManager = TursoTransactionManager;
+    /// Diesel's ANSI manager, unmodified — `BEGIN` at the top level and
+    /// `SAVEPOINT diesel_savepoint_N` beneath it.
+    ///
+    /// This used to be a hand-rolled `TursoTransactionManager`, justified by
+    /// "Turso doesn't support SAVEPOINTs". That was true once and is not now:
+    /// `SAVEPOINT`, `ROLLBACK TO SAVEPOINT` and `RELEASE SAVEPOINT` are all
+    /// implemented on the Turso revision this crate pins (see
+    /// `core/translate/rollback.rs`), and the acceptance suite exercises them
+    /// against a real database rather than taking anyone's word for it.
+    ///
+    /// Three things came back with the ANSI manager, and each of them was a
+    /// way to lose data quietly:
+    ///
+    /// 1. **Nesting means what diesel documents it to mean.** The bespoke
+    ///    manager folded every nested `.transaction()` into the outer one and
+    ///    "poisoned" the outer if an inner callback returned `Err` — so an
+    ///    inner rollback threw away the outer transaction's work as well,
+    ///    including work done before the inner one began. Under savepoints an
+    ///    inner rollback undoes the inner block and nothing else, which is
+    ///    what every diesel backend does and what callers write their code
+    ///    against.
+    /// 2. **A failed `COMMIT` is repaired instead of latching.** The old
+    ///    manager put the status in `InError` with the depth left where it
+    ///    was, and nothing public could clear it. See
+    ///    [`flag_rollback_if_turso_still_holds_the_transaction`], which is
+    ///    the Turso-specific half of that repair.
+    /// 3. **A cancelled transaction future is detectable.** The ANSI manager
+    ///    wraps every `BEGIN`/`COMMIT`/`ROLLBACK` await in a critical block
+    ///    whose flag stays set if the future is dropped mid-statement, and
+    ///    overrides `is_broken_transaction_manager` to report it — so a pool
+    ///    retires that connection instead of handing it out with the
+    ///    database in a state nobody knows.
+    ///
+    /// The one thing the bespoke manager did that this does not is treat
+    /// "cannot commit - no transaction is active" as a soft success, on the
+    /// theory that Turso's deferred transaction might never latch for a
+    /// read-only block. It does latch: `BEGIN` sets `auto_commit` false
+    /// unconditionally, so a read-only `BEGIN` … `COMMIT` returns `Ok`, and
+    /// that branch was unreachable on this revision. It went with the
+    /// manager, along with the `last_commit_did_not_latch` diagnostic that
+    /// consumers read it through.
+    type TransactionManager = AnsiAsyncTransactionManager;
 
     fn establish(database_url: &str) -> impl Future<Output = ConnectionResult<Self>> + Send {
         let url = database_url.to_owned();

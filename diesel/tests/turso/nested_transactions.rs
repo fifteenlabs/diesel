@@ -1,9 +1,16 @@
-//! Turso doesn't support SAVEPOINT, so `TursoTransactionManager` folds
-//! nested `.transaction()` calls into the outer. If an inner rollback
-//! happens, the outer is "poisoned" — its commit emits `ROLLBACK`
-//! instead of `COMMIT` and returns [`Error::RollbackTransaction`]. We
-//! can't provide savepoint-style partial rollback, so we fail safe:
-//! silently-swallowed inner failures can never commit.
+//! Nested `.transaction()` on Turso, which is ordinary ANSI savepoint
+//! nesting — `BEGIN` at the top, `SAVEPOINT diesel_savepoint_N` beneath it.
+//!
+//! It was not always. The backend used to carry a hand-rolled transaction
+//! manager that folded every nested call into the outer one, on the stated
+//! grounds that "Turso doesn't support SAVEPOINTs". That is no longer true
+//! — `SAVEPOINT`, `ROLLBACK TO SAVEPOINT` and `RELEASE SAVEPOINT` are all
+//! implemented on the revision this crate pins — and the folding was not a
+//! harmless simplification: an inner rollback poisoned the outer
+//! transaction, so a caller who caught an inner failure and carried on lost
+//! the outer transaction's work too, including the work it had done before
+//! the inner block began. The first test below is the one that changed
+//! meaning, and it is the meaning every other diesel backend has.
 //!
 //! The writes below go through the typed DSL, so what each transaction did or
 //! undid is stated in terms of the rows the app would actually have written.
@@ -42,37 +49,43 @@ async fn insert(conn: &mut TursoConnection, id: i32) -> QueryResult<usize> {
         .await
 }
 
+/// An inner rollback undoes the inner block and nothing else.
+///
+/// Under the folding manager this test asserted the opposite: the outer
+/// commit came back `Err(RollbackTransaction)` and *all three* rows were
+/// gone, id 1 included — a row written before the inner transaction existed.
+/// A caller that treats a failed sub-operation as recoverable, which is the
+/// whole reason to open an inner transaction, silently lost everything
+/// around it.
 #[tokio::test(flavor = "current_thread")]
-async fn inner_rollback_poisons_outer_commit() -> Result<()> {
+async fn inner_rollback_undoes_only_the_inner_block() -> Result<()> {
     let mut conn = connect().await?;
 
-    let outer = conn
-        .transaction::<_, Error, _>(|c| {
-            async move {
-                insert(c, 1).await?;
+    conn.transaction::<_, Error, _>(|c| {
+        async move {
+            insert(c, 1).await?;
 
-                // Inner rolls back. Under savepoint semantics id=1 would
-                // survive and id=2 would be gone; here the outer is
-                // poisoned and *everything* will roll back on commit.
-                let _ = c
-                    .transaction::<(), Error, _>(|inner| {
-                        async move {
-                            insert(inner, 2).await?;
-                            Err(Error::RollbackTransaction)
-                        }
-                        .scope_boxed()
-                    })
-                    .await;
+            // Inner rolls back to its savepoint: id 2 goes, id 1 stays, and
+            // the outer transaction is still live and still committable.
+            let inner = c
+                .transaction::<(), Error, _>(|inner| {
+                    async move {
+                        insert(inner, 2).await?;
+                        Err(Error::RollbackTransaction)
+                    }
+                    .scope_boxed()
+                })
+                .await;
+            assert!(matches!(inner, Err(Error::RollbackTransaction)));
 
-                insert(c, 3).await?;
-                Ok(())
-            }
-            .scope_boxed()
-        })
-        .await;
+            insert(c, 3).await?;
+            Ok(())
+        }
+        .scope_boxed()
+    })
+    .await?;
 
-    assert!(matches!(outer, Err(Error::RollbackTransaction)));
-    assert_eq!(ids(&mut conn).await?, Vec::<i32>::new());
+    assert_eq!(ids(&mut conn).await?, vec![1, 3]);
     Ok(())
 }
 
@@ -124,5 +137,45 @@ async fn nested_all_success_commits() -> Result<()> {
     .await?;
 
     assert_eq!(ids(&mut conn).await?, vec![1, 2, 3]);
+    Ok(())
+}
+
+/// Three levels deep, with the middle one rolled back: the savepoint stack
+/// has to unwind to the right level rather than to the nearest one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_middle_level_rollback_keeps_the_levels_around_it() -> Result<()> {
+    let mut conn = connect().await?;
+
+    conn.transaction::<_, Error, _>(|c| {
+        async move {
+            insert(c, 1).await?;
+            let middle = c
+                .transaction::<(), Error, _>(|m| {
+                    async move {
+                        insert(m, 2).await?;
+                        m.transaction::<_, Error, _>(|inner| {
+                            async move {
+                                insert(inner, 3).await?;
+                                Ok(())
+                            }
+                            .scope_boxed()
+                        })
+                        .await?;
+                        Err(Error::RollbackTransaction)
+                    }
+                    .scope_boxed()
+                })
+                .await;
+            assert!(matches!(middle, Err(Error::RollbackTransaction)));
+            insert(c, 4).await?;
+            Ok(())
+        }
+        .scope_boxed()
+    })
+    .await?;
+
+    // 2 and 3 were both inside the rolled-back middle level; 1 preceded it
+    // and 4 followed it.
+    assert_eq!(ids(&mut conn).await?, vec![1, 4]);
     Ok(())
 }

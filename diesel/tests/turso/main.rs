@@ -35,6 +35,7 @@ mod stream_cancellation;
 mod strict_type_support;
 mod subselect_limit;
 mod to_sql_owned;
+mod transaction_recovery;
 mod type_probe;
 mod union_boxed;
 mod union_expressions;
