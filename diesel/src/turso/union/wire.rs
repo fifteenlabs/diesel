@@ -16,8 +16,10 @@
 //! (1/2/3/4/6/8 bytes), 7=f64, 8/9=literal 0/1, 12+2n=BLOB of length n,
 //! 13+2n=TEXT of length n. The encoder picks the narrowest serial that
 //! fits each integer (serial 1/2/3/4/5/6 by magnitude, plus the
-//! literal-0/1 serials 8/9); REALs always go out as serial 7. Both
-//! turso and ourselves accept every serial on read.
+//! literal-0/1 serials 8/9); a REAL goes out as serial 7 unless it is a
+//! NaN, which Turso cannot represent and stores as NULL (serial 0), so we
+//! do too — see [`encode_value`]. Both turso and ourselves accept every
+//! serial on read.
 
 use thiserror::Error;
 
@@ -112,7 +114,18 @@ fn encode_record_into(values: &[turso::Value], out: &mut Vec<u8>) {
 pub fn decode_record(buf: &[u8]) -> Result<Vec<turso::Value>, WireError> {
     let (header_size, len_consumed) = read_varint(buf)?;
     let header_end = header_size as usize;
-    if buf.len() < header_end {
+    // The header-size varint counts *itself*, so a well-formed record always
+    // has `header_size >= len_consumed`. Checking only the upper bound would
+    // leave the lower one to `&buf[len_consumed..header_end]`, which panics
+    // rather than erroring when the two cross — and every byte of a UNION
+    // column is attacker-shaped in the sense that matters here: Turso stores
+    // a blob verbatim, so `Blob([1, 0])` is a row an older binary, a hand-
+    // written migration or a corrupted page can leave behind, and reading it
+    // back through the derive aborted the process. That is precisely what
+    // [`WireError`] exists to prevent, and what [`super::display`] promises
+    // when it says a blob that does not decode comes back as `None` rather
+    // than taking the caller with it.
+    if header_end < len_consumed || buf.len() < header_end {
         return Err(WireError::UnexpectedEof);
     }
     let mut header_cursor = &buf[len_consumed..header_end];
@@ -135,6 +148,24 @@ fn encode_value(v: &turso::Value, body: &mut Vec<u8>) -> u64 {
     match v {
         turso::Value::Null => 0,
         turso::Value::Integer(n) => encode_integer(*n, body),
+        // Turso has no NaN REAL. Its own `Value::from_f64`
+        // (`core/numeric/nonnan.rs`) folds every NaN to NULL, and it does so
+        // on bind, inside `union_value`, inside `struct_pack` and again on
+        // record read — so a NaN written by anything on Turso's side of the
+        // wire comes back as a NULL in serial 0, with no payload.
+        //
+        // Writing serial 7 with the NaN bit pattern here would therefore be
+        // the exact failure this module's differential test exists to catch:
+        // the same logical value with two byte strings. A migration's
+        // `union_value(…)` would write serial 0 and the app would bind
+        // serial 7, so the app's lookup by UNION key would miss the row it
+        // just migrated, its insert would succeed, and the table would grow
+        // a duplicate identity — silently, because nothing compares the two
+        // encodings at runtime. Reading is the mirror image: Turso's row
+        // hands us a NULL where our `FromSql` expects a REAL.
+        //
+        // So we spell Turso's rule rather than the IEEE one: NaN is NULL.
+        turso::Value::Real(f) if f.is_nan() => 0,
         turso::Value::Real(f) => {
             body.extend_from_slice(&f.to_be_bytes());
             7
