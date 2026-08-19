@@ -25,7 +25,7 @@ use diesel::connection::AsyncConnection;
 ///
 /// let mut connection = connection_no_data().await;
 ///
-/// // Alternativly use `diesel_migrations::embed_migrations!()`
+/// // Alternatively use `diesel_migrations::embed_migrations!()`
 /// // to get a list of migrations
 /// let migrations = FileBasedMigrations::find_migrations_directory()?;
 ///
@@ -75,7 +75,7 @@ use diesel::connection::AsyncConnection;
 /// use diesel_migrations::AsyncMigrationHarness;
 /// use diesel_migrations::{FileBasedMigrations, MigrationHarness};
 ///
-/// // Alternativly use `diesel_migrations::embed_migrations!()`
+/// // Alternatively use `diesel_migrations::embed_migrations!()`
 /// // to get a list of migrations
 /// let migrations = FileBasedMigrations::find_migrations_directory()?;
 ///
