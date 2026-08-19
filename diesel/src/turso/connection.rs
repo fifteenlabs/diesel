@@ -380,9 +380,15 @@ impl StatementCache {
         }
     }
 
-    /// Forget the oldest families past the bound. Entries already removed
-    /// (admitted, so gone from the map) drop out of the queue here too, which
-    /// is what keeps the queue itself bounded.
+    /// Forget the oldest families past the bound — from the queue and from
+    /// the map together, which is the only thing that bounds either.
+    ///
+    /// Nothing else ever removes a family. Admission in particular does not:
+    /// a `Single` entry is kept precisely so that a second, different text can
+    /// contradict it, which is why an `eq_any` cannot buy a slot per list
+    /// length (see [`Family::Single`]). So `probation_order` grows by one
+    /// entry per never-before-seen family and shrinks only here, and the map
+    /// is bounded because it is trimmed in step with the queue.
     ///
     /// A `Variadic` mark can be forgotten this way and then have to be
     /// re-learned, which costs one wasted slot in the worst case — the cap
@@ -415,8 +421,7 @@ impl TursoConnection {
         &self.conn
     }
 
-    /// Open a Turso connection, optionally enabling multiprocess WAL and
-    /// foreign-key enforcement.
+    /// Open a Turso connection, optionally enabling multiprocess WAL.
     ///
     /// Multiprocess WAL lets a second process (the `fifteen db` CLI) read a
     /// database while the app holds it open. The current turso build has a
@@ -425,15 +430,14 @@ impl TursoConnection {
     /// single-process stores opt out. In-memory backends (`:memory:` or an
     /// empty path) reject the flag, so it's never set for them.
     ///
-    /// `foreign_keys` is what every caller but the migration runner wants —
-    /// see [`Self::establish_for_migrations`] for the one that doesn't, and
-    /// the paragraph below for why the default is not "whatever the engine
-    /// does".
-    async fn open(
-        database_url: &str,
-        multiprocess_wal: bool,
-        foreign_keys: bool,
-    ) -> ConnectionResult<Self> {
+    /// Foreign keys are not a parameter. There used to be a door that left
+    /// them off, for schema migrations, on the reasoning that a table rebuild
+    /// cannot run under enforcement — but a migration that needs them off
+    /// says so in its own SQL, and a *connection* that hands them out off
+    /// makes the state a migration runs under depend on which call site
+    /// opened it. See the paragraph below for why the default is not
+    /// "whatever the engine does".
+    async fn open(database_url: &str, multiprocess_wal: bool) -> ConnectionResult<Self> {
         let is_in_memory = database_url.is_empty() || database_url == ":memory:";
         let mut builder = turso::Builder::new_local(database_url)
             .experimental_strict(true)
@@ -462,15 +466,21 @@ impl TursoConnection {
         // pragma has no transaction to be a no-op inside at this point, and it
         // costs one statement per connection.
         //
-        // Run as a batch rather than through the DSL: `execute` offers the
-        // statement to the cache, and this one runs once per connection, so it
+        // Run as a batch rather than through `execute`, which would offer the
+        // statement to the cache: this one runs once per connection, so it
         // would hold a slot for ever and land in every count of what the cache
         // admitted — including the perf runner's.
-        if foreign_keys {
-            conn.batch_execute(crate::turso::pragma::foreign_keys(true).sql())
-                .await
-                .map_err(crate::ConnectionError::CouldntSetupConfiguration)?;
-        }
+        //
+        // Spelled out as text because a pragma takes no bind parameters
+        // (`PRAGMA foreign_keys = ?` is a parse error). The text is worth
+        // reading twice before it changes: `PRAGMA foreign_key = ON`
+        // (singular) is not an error, it is an unknown pragma, which is a
+        // silent no-op — and the symptom is orphan rows nobody notices for a
+        // month. `tests/turso/foreign_keys.rs` writes a row that must be
+        // rejected, so a misspelling here turns the suite red.
+        conn.batch_execute("PRAGMA foreign_keys = ON")
+            .await
+            .map_err(crate::ConnectionError::CouldntSetupConfiguration)?;
         Ok(conn)
     }
 
@@ -483,43 +493,7 @@ impl TursoConnection {
     /// `fifteen db` CLI can read it live. (The CLI can still query the
     /// single-process stores while the app is closed.)
     pub async fn establish_single_process(database_url: &str) -> ConnectionResult<Self> {
-        Self::open(database_url, false, true).await
-    }
-
-    /// Establish a connection for a schema-migration run, with foreign keys
-    /// left *off*.
-    ///
-    /// This is the one caller that wants the engine's own default rather than
-    /// the enforced connection [`establish`](AsyncConnection::establish) and
-    /// [`establish_single_process`](Self::establish_single_process) hand out,
-    /// and it wants it for a reason that outlives any single migration.
-    ///
-    /// A schema change SQLite cannot make in place — altering a column type,
-    /// adding `ON UPDATE CASCADE` to a foreign key — is made by rebuilding the
-    /// table: create the replacement, copy the rows across, drop the original,
-    /// rename the replacement into its place. Every step of that is a foreign
-    /// key violation waiting to happen. The original is dropped while children
-    /// still point at it; the replacement is populated before anything it
-    /// references necessarily exists; a `DROP TABLE` under enforcement fires
-    /// `ON DELETE CASCADE` and takes the children with it. That is why the
-    /// twelve-step rebuild in SQLite's own documentation begins by turning
-    /// foreign keys off.
-    ///
-    /// Migrations that need that already say so — `PRAGMA foreign_keys = OFF`
-    /// as their first statement — but the ones that were written and verified
-    /// against an engine that defaults to off may not have had to. Those
-    /// migrations are immutable once shipped: they run, unchanged, on
-    /// databases users already have. Establishing the migration connection
-    /// with enforcement on would change what they do to a live database years
-    /// after they were verified, and the failure would land mid-upgrade, on a
-    /// half-migrated file. So the runner keeps the state those migrations were
-    /// written under, and every *other* connection to the finished database
-    /// enforces.
-    pub async fn establish_for_migrations(
-        database_url: &str,
-        multiprocess_wal: bool,
-    ) -> ConnectionResult<Self> {
-        Self::open(database_url, multiprocess_wal, false).await
+        Self::open(database_url, false).await
     }
 
     /// What the statement cache has admitted, hit and refused so far.
@@ -814,9 +788,9 @@ impl AsyncConnection for TursoConnection {
         // meta.db keeps multiprocess WAL enabled so the `fifteen db` CLI can
         // read it while the app runs. Single-process stores (signal.db,
         // whatsapp.db) use `establish_single_process` to dodge the
-        // multiprocess-WAL checkpoint bug. Both enforce foreign keys; only
-        // `establish_for_migrations` does not.
-        async move { Self::open(&url, true, true).await }
+        // multiprocess-WAL checkpoint bug. Every door enforces foreign keys;
+        // there is no longer one that doesn't.
+        async move { Self::open(&url, true).await }
     }
 
     fn transaction_state(
@@ -841,91 +815,6 @@ impl AsyncConnection for TursoConnection {
     /// this is "cache no more", not "empty the cache".
     fn set_prepared_statement_cache_size(&mut self, size: CacheSize) {
         self.statement_cache.size = size;
-    }
-}
-
-/// Lets a `TursoConnection` be pooled by
-/// [`AsyncDieselConnectionManager`](crate::pooled_connection::AsyncDieselConnectionManager),
-/// and so by bb8, deadpool or mobc.
-///
-/// # Why there is no `ping` override
-///
-/// The default is right, and it is right for a reason worth writing down
-/// rather than leaving as an absence.
-///
-/// [`RecyclingMethod::Verified`](crate::pooled_connection::RecyclingMethod::Verified),
-/// the default, runs `SELECT 1` through
-/// [`execute`](crate::query_dsl::async_run_query_dsl::RunQueryDsl::execute).
-/// That is a statement which returns a row being run for its row *count* —
-/// the exact shape `execute_returning_count` used to refuse on this backend,
-/// with `Misuse("unexpected row during execution")` raised after the
-/// statement had already run. Had the pool arrived first, `ping` would have
-/// reported every healthy connection as dead. It steps the statement to
-/// `Done` now, so the default works — and because nothing else in the suite
-/// runs a row-returning statement for its count through a *pool*,
-/// `tests/turso/pooling.rs` pins it.
-///
-/// Nor is there anything cheaper to substitute. The checks other backends
-/// spend a `ping` on — that the socket is still open, that the server has not
-/// timed the session out, that a failover has not moved the primary — do not
-/// exist for a database that is a file in this process. `SELECT 1` compiles
-/// out of Turso's statement cache after the first checkout and steps no
-/// pages, so what it costs is a VDBE call, and what it buys is the one thing
-/// still worth knowing: that the connection answers at all.
-///
-/// The Turso-specific hazard a query *cannot* reveal is an open transaction,
-/// and that belongs in
-/// [`is_broken`](crate::pooled_connection::PoolableConnection::is_broken),
-/// which every pool consults and which costs nothing.
-#[cfg(feature = "async-pool")]
-impl crate::pooled_connection::PoolableConnection for TursoConnection {
-    /// Broken when diesel's transaction manager says so, or when Turso is
-    /// still holding a transaction diesel does not know about.
-    ///
-    /// The first half is [`AnsiAsyncTransactionManager`]'s override, and it is
-    /// the check this backend gained by adopting that manager: a transaction
-    /// future dropped mid-`BEGIN`/`COMMIT` leaves a flag set that nothing
-    /// clears, and one dropped inside the callback leaves the depth behind.
-    /// Both mean the caller cannot say what state the database is in, and the
-    /// answer to that is to retire the connection rather than reuse it. See
-    /// `tests/turso/transaction_recovery.rs`.
-    ///
-    /// The second half is Turso's own, and no other backend in this crate has
-    /// to consider it, because no other backend hands out its driver
-    /// connection: [`TursoConnection::raw`] is the documented escape hatch for
-    /// the UNION and STRUCT queries the DSL cannot express, and SQL issued
-    /// through it is invisible to the transaction manager. `auto_commit` is
-    /// the engine's own answer to "am I in a transaction", so it catches the
-    /// disagreement that depth cannot.
-    ///
-    /// It is worth catching because of what the disagreement does once a pool
-    /// is involved. A single long-lived connection at least keeps an orphaned
-    /// transaction to the caller that opened it — that was the meta database's
-    /// arrangement, and the failure it produced is described on
-    /// [`flag_rollback_if_turso_still_holds_the_transaction`]. A pool hands
-    /// that connection to the *next* caller, whose ordinary autocommit writes
-    /// then join a transaction nobody is going to commit: they return `Ok`,
-    /// they read back correctly for as long as the connection lives, and they
-    /// are gone when it closes. Nothing anywhere returns an error. One
-    /// `is_autocommit` call on the way back into the pool is a cheap price for
-    /// ruling that out.
-    ///
-    /// It is also what makes
-    /// [`RecyclingMethod::Fast`](crate::pooled_connection::RecyclingMethod::Fast)
-    /// safe here, which matters more than it does elsewhere: `Fast` skips
-    /// [`PoolableConnection::ping`](crate::pooled_connection::PoolableConnection::ping)
-    /// altogether, and for an embedded database it is the recycling method
-    /// that makes sense — so `is_broken` is then the only thing standing
-    /// between a returned connection and the next caller.
-    ///
-    /// A connection too broken to answer `is_autocommit` is reported broken
-    /// rather than assumed healthy, the same direction `AsyncPgConnection`
-    /// takes with `is_closed`.
-    fn is_broken(&mut self) -> bool {
-        use crate::connection::AsyncTransactionManager;
-
-        Self::TransactionManager::is_broken_transaction_manager(self)
-            || !self.conn.is_autocommit().unwrap_or(false)
     }
 }
 
@@ -1101,6 +990,31 @@ mod tests {
 
     /// A `dsl::sql` fragment with static text is vetoed by diesel exactly like
     /// one built by `format!` — diesel cannot tell them apart. Recurrence can.
+    ///
+    /// The rule this demonstrates is "a text that recurs is admitted unless
+    /// its *family* has produced a second text", not "static text is
+    /// admitted". The two come apart, because [`family_of`] canonicalises
+    /// bytes and does not parse: it has no idea where a string literal
+    /// begins. Three statements as static as any —
+    ///
+    /// ```sql
+    /// SELECT CAST('?'   AS TEXT)
+    /// SELECT CAST('??'  AS TEXT)
+    /// SELECT CAST('???' AS TEXT)
+    /// ```
+    ///
+    /// differ only in the number of `?`s inside a literal, collapse to one
+    /// family key, and so are read as one variadic call site: the second one
+    /// seen closes the family and all three are refused for the life of the
+    /// process.
+    ///
+    /// That is a missed cache, never a wrong answer — an uncached statement
+    /// runs the same program, compiled again — and no shape diesel renders
+    /// collides this way. Narrower and wider `SET` lists, column lists,
+    /// chained `WHERE`s and upserts all keep a column name or an operator
+    /// between their placeholders, which ends the run. So it is left as it is
+    /// and written down here, rather than paid for with a SQL-aware scan on
+    /// every statement the app executes.
     #[test]
     fn admits_a_static_sql_literal_and_refuses_an_interpolated_one() {
         let mut cache = StatementCache::default();
@@ -1113,6 +1027,36 @@ mod tests {
             assert!(!cache.admit(&interpolated, VETOED));
         }
         assert_eq!(cache.stats().admitted, 1, "only the static one got in");
+    }
+
+    /// The counter-example to "static text is admitted", stated in
+    /// [`admits_a_static_sql_literal_and_refuses_an_interpolated_one`]'s doc.
+    ///
+    /// [`family_of`] canonicalises bytes and does not parse SQL, so `?`s
+    /// inside a string literal are collapsed like any other placeholder run.
+    /// These three texts are as static as it gets, share one family key, and
+    /// are all refused for the life of the process once the second one is
+    /// seen. Pinned rather than fixed: it costs a missed cache and never a
+    /// wrong answer, no shape diesel renders collides this way, and the fix
+    /// would be a SQL-aware scan on every statement the app executes. If that
+    /// trade ever stops being the right one, this test is the description of
+    /// what changed.
+    #[test]
+    fn question_marks_inside_a_literal_are_read_as_a_placeholder_run() {
+        let a = "SELECT CAST('?' AS TEXT)";
+        let b = "SELECT CAST('??' AS TEXT)";
+        let c = "SELECT CAST('???' AS TEXT)";
+        assert_eq!(family_of(a), family_of(b), "a and b share a family");
+        assert_eq!(family_of(a), family_of(c), "a and c share a family");
+        let mut cache = StatementCache::default();
+        assert!(!cache.admit(a, VETOED));
+        assert!(!cache.admit(b, VETOED));
+        assert!(!cache.admit(c, VETOED));
+        assert!(
+            !cache.admit(a, VETOED),
+            "a is refused even though it recurs"
+        );
+        assert_eq!(cache.stats().admitted, 0);
     }
 
     #[test]

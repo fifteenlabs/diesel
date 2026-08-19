@@ -26,7 +26,8 @@
 //! Member-by-member, ignoring formatting and case, over every `CREATE TYPE`
 //! the derive emits — the union itself and each of its struct-variant
 //! payload types. Turso re-renders the statement from its own AST on the way
-//! out, so string equality is not on the table; see [`super::ddl`].
+//! out, so string equality is not on the table; see
+//! [`union::ddl`](super::union::ddl).
 //!
 //! Extra declarations in the database are fine and expected: superseded
 //! versions (`social_id_v5` next to `social_id_v6`) can never be dropped

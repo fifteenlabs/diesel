@@ -603,7 +603,8 @@ mod private {
     }
 }
 
-#[cfg(test)]
+// `TestConnection` again — see the note in `connection::transaction_manager`.
+#[cfg(all(test, any(feature = "sqlite", feature = "postgres", feature = "mysql")))]
 mod tests {
     fn assert_send<S: Send>(_: S) {}
 

@@ -375,20 +375,33 @@ where
 // shape available: the verdict for `UnionTag<col>` has to travel through
 // `col`'s own `ValidGrouping` impl, so it cannot be made narrower than
 // `col`'s. The consequence is that grouping by one of these expressions
-// also admits the operand and its siblings — `GROUP BY union_tag(col)`
-// will let you select a bare `col`, which SQLite and Turso allow (an
-// arbitrary row from the group) but which is not functionally determined.
-// Diesel's model has one bit here and this is the bit that keeps the
-// determined case working; the alternative would be a second
-// `ValidGrouping` impl per node, overlapping the delegating one.
+// also admits the operand and every sibling expression over it. Concretely,
+// and this is the worst case rather than the mild one:
+//
+//   GROUP BY union_extract(col, 'a')
+//   SELECT   union_extract(col, 'b')     -- accepted, and not determined
+//
+// Every row whose variant is not `a` has `union_extract(col, 'a') = NULL`,
+// so they all land in one group — while their `b` payloads differ. Turso
+// answers with an arbitrary row's, silently, and the same goes for a bare
+// `col` under `GROUP BY union_tag(col)`. Both are legal SQLite/Turso and
+// neither is functionally determined, so the type system is admitting a
+// query whose answer is unspecified.
+//
+// That is a trade diesel's model forces rather than one worth relitigating
+// here: `IsContainedInGroupBy` carries one bit, this is the bit that keeps
+// the determined case compiling, and narrowing it would take a second
+// `ValidGrouping` impl per node that overlaps the delegating one. The
+// alternative on offer was not "a tighter rule" but "`GROUP BY
+// union_extract(…)` does not compile at all" — and that is a real query,
+// since a struct variant's payload is exactly what one groups by.
 //
 // All three nodes get it, because all three are pure scalar functions of
 // their operand: `union_tag(col)`, `union_extract(col, 't')` and
 // `struct_extract(union_extract(col, 't'), 'f')` are each constant within
 // a group of equal operands, so if the operand is grouped, so are they.
-// Giving it to only one would leave `GROUP BY union_extract(…)` — a real
-// query, since a struct variant's payload is what one groups by — with
-// exactly the defect this removes.
+// Giving it to only one would leave the others with exactly the compile
+// error this removes.
 
 impl<E, T, V> crate::expression::IsContainedInGroupBy<T> for Extract<E, V>
 where
