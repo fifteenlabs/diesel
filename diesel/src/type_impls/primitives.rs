@@ -167,16 +167,34 @@ where
     }
 }
 
+/// A `SharedString` is refcounted or inline, and either way it cannot adopt
+/// a `String`'s buffer — so building one through a `String` costs an
+/// allocation that is dropped on the next line. This reads the `&str` the
+/// backend already has, the same way the `String` impl above does.
+///
+/// The bound is `*const str` rather than `String: FromSql<ST, DB>` for the
+/// same reason it is on that impl: it leaves a backend free to write its own
+/// `FromSql<Text, _> for SharedString` without overlapping this one, which
+/// is what `crate::turso` does.
+///
+/// `SharedString::new` and not `SharedString::from`: `from` accepts a
+/// `&'static str` and keeps the borrow, and the lifetime that comes out of
+/// the raw-pointer deref below is unconstrained, so it would be inferred as
+/// `'static` and the value would outlive the row it points into. `new`
+/// always takes a copy.
 #[cfg(feature = "gpui")]
 #[diagnostic::do_not_recommend]
 impl<ST, DB> FromSql<ST, DB> for gpui::SharedString
 where
     DB: Backend,
-    String: FromSql<ST, DB>,
+    *const str: FromSql<ST, DB>,
 {
+    #[allow(unsafe_code)] // ptr dereferencing
     fn from_sql(bytes: DB::RawValue<'_>) -> deserialize::Result<Self> {
-        let string = <String as FromSql<ST, DB>>::from_sql(bytes)?;
-        Ok(string.into())
+        let str_ptr = <*const str as FromSql<ST, DB>>::from_sql(bytes)?;
+        // We know that the pointer impl will never return null
+        let string = unsafe { &*str_ptr };
+        Ok(gpui::SharedString::new(string))
     }
 }
 
