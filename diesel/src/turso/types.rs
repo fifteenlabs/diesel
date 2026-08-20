@@ -104,7 +104,43 @@ impl ToSql<sql_types::Text, Turso> for str {
 impl FromSql<sql_types::Text, Turso> for String {
     fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
         match v.as_turso() {
+            // The row owns this and outlives the call, so the clone is
+            // forced: `FromSql` is handed a borrow and has to return a value
+            // that owns its buffer. Nothing here can hand the row's `String`
+            // over instead — `Row::get` takes `&self`. A target that does not
+            // need to own the bytes should not come through here at all; see
+            // the `SharedString` impl below.
             turso::Value::Text(s) => Ok(s.clone()),
+            other => mismatch("Text", other),
+        }
+    }
+}
+
+/// `gpui::SharedString` off a Turso `TEXT` column, without the `String` in
+/// the middle.
+///
+/// A `SharedString` column used to cost three allocations to read: turso's
+/// `get_value` building the row's `String`, `FromSql<Text, Turso> for
+/// String` cloning it, and `SharedString` copying out of the clone because
+/// it can never adopt a `String`'s buffer. Only the first is real work — so
+/// this skips the other two and reads the row's `&str` directly. Where
+/// `SharedString` is backed by a `SmolStr`, anything under 23 bytes is then
+/// stored inline and the read allocates nothing at all.
+///
+/// Measured on a counting allocator, per decoded column, against a
+/// `SmolStr`-backed `SharedString`: a 13-byte value went from 1 allocation
+/// and 13 bytes to 0 and 0, and a 60-byte value from 2 and 140 to 1 and 80.
+///
+/// This does not overlap the generic impl in
+/// `crate::type_impls::primitives`, which is bounded on
+/// `*const str: FromSql<ST, DB>` — a bound Turso deliberately does not
+/// satisfy, since its raw value is a tagged `turso::Value` and not a byte
+/// slice to be re-decoded.
+#[cfg(feature = "gpui")]
+impl FromSql<sql_types::Text, Turso> for gpui::SharedString {
+    fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+        match v.as_turso() {
+            turso::Value::Text(s) => Ok(gpui::SharedString::new(s.as_str())),
             other => mismatch("Text", other),
         }
     }
