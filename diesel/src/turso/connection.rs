@@ -818,6 +818,94 @@ impl AsyncConnection for TursoConnection {
     }
 }
 
+/// Lets a `TursoConnection` be pooled by
+/// [`AsyncDieselConnectionManager`](crate::pooled_connection::AsyncDieselConnectionManager),
+/// and so by bb8, deadpool or mobc.
+///
+/// This has no consumer inside this repository — the pools are exercised by
+/// the application that vendors this fork, whose writer pool is an
+/// `AsyncDieselConnectionManager<TursoConnection>` behind deadpool. It was
+/// deleted once on the strength of the in-tree search and had to come back,
+/// so: the bound is only checked where a manager is instantiated, and
+/// nothing here instantiates one.
+///
+/// # Why there is no `ping` override
+///
+/// The default is right, and it is right for a reason worth writing down
+/// rather than leaving as an absence.
+///
+/// [`RecyclingMethod::Verified`](crate::pooled_connection::RecyclingMethod::Verified),
+/// the default, runs `SELECT 1` through
+/// [`execute`](crate::query_dsl::async_run_query_dsl::RunQueryDsl::execute).
+/// That is a statement which returns a row being run for its row *count* —
+/// the exact shape `execute_returning_count` used to refuse on this backend,
+/// with `Misuse("unexpected row during execution")` raised after the
+/// statement had already run. Had the pool arrived first, `ping` would have
+/// reported every healthy connection as dead. It steps the statement to
+/// `Done` now, so the default works.
+///
+/// Nor is there anything cheaper to substitute. The checks other backends
+/// spend a `ping` on — that the socket is still open, that the server has not
+/// timed the session out, that a failover has not moved the primary — do not
+/// exist for a database that is a file in this process. `SELECT 1` compiles
+/// out of Turso's statement cache after the first checkout and steps no
+/// pages, so what it costs is a VDBE call, and what it buys is the one thing
+/// still worth knowing: that the connection answers at all.
+///
+/// The Turso-specific hazard a query *cannot* reveal is an open transaction,
+/// and that belongs in
+/// [`is_broken`](crate::pooled_connection::PoolableConnection::is_broken),
+/// which every pool consults and which costs nothing.
+#[cfg(feature = "async-pool")]
+impl crate::pooled_connection::PoolableConnection for TursoConnection {
+    /// Broken when diesel's transaction manager says so, or when Turso is
+    /// still holding a transaction diesel does not know about.
+    ///
+    /// The first half is [`AnsiAsyncTransactionManager`]'s override: a
+    /// transaction future dropped mid-`BEGIN`/`COMMIT` leaves a flag set that
+    /// nothing clears, and one dropped inside the callback leaves the depth
+    /// behind. Both mean the caller cannot say what state the database is in,
+    /// and the answer to that is to retire the connection rather than reuse
+    /// it. See `tests/turso/transaction_recovery.rs`.
+    ///
+    /// The second half is Turso's own, and no other backend in this crate has
+    /// to consider it, because no other backend hands out its driver
+    /// connection: [`TursoConnection::raw`] is the documented escape hatch for
+    /// the UNION and STRUCT queries the DSL cannot express, and SQL issued
+    /// through it is invisible to the transaction manager. `auto_commit` is
+    /// the engine's own answer to "am I in a transaction", so it catches the
+    /// disagreement that depth cannot.
+    ///
+    /// It is worth catching because of what the disagreement does once a pool
+    /// is involved. A single long-lived connection at least keeps an orphaned
+    /// transaction to the caller that opened it — see
+    /// [`flag_rollback_if_turso_still_holds_the_transaction`]. A pool hands
+    /// that connection to the *next* caller, whose ordinary autocommit writes
+    /// then join a transaction nobody is going to commit: they return `Ok`,
+    /// they read back correctly for as long as the connection lives, and they
+    /// are gone when it closes. Nothing anywhere returns an error. One
+    /// `is_autocommit` call on the way back into the pool is a cheap price for
+    /// ruling that out.
+    ///
+    /// It is also what makes
+    /// [`RecyclingMethod::Fast`](crate::pooled_connection::RecyclingMethod::Fast)
+    /// safe here, which matters more than it does elsewhere: `Fast` skips
+    /// [`PoolableConnection::ping`](crate::pooled_connection::PoolableConnection::ping)
+    /// altogether, and for an embedded database it is the recycling method
+    /// that makes sense — so `is_broken` is then the only thing standing
+    /// between a returned connection and the next caller.
+    ///
+    /// A connection too broken to answer `is_autocommit` is reported broken
+    /// rather than assumed healthy, the same direction `AsyncPgConnection`
+    /// takes with `is_closed`.
+    fn is_broken(&mut self) -> bool {
+        use crate::connection::AsyncTransactionManager;
+
+        Self::TransactionManager::is_broken_transaction_manager(self)
+            || !self.conn.is_autocommit().unwrap_or(false)
+    }
+}
+
 struct NoopInstrumentation;
 impl Instrumentation for NoopInstrumentation {
     fn on_connection_event(&mut self, _event: crate::connection::InstrumentationEvent<'_>) {}
