@@ -74,6 +74,14 @@ pub use self::connection::{StatementCacheStats, TursoConnection};
 pub use self::error::{turso_to_connection, turso_to_diesel};
 pub use self::row::{TursoField, TursoRow};
 pub use self::value::TursoValue;
+/// The encryption parameters
+/// [`TursoConnection::establish_single_process_encrypted`] takes.
+///
+/// Re-exported for the same reason `driver::Value` is: a crate that opens an
+/// encrypted database would otherwise need a `turso` dependency of its own
+/// purely to name this struct, and two crates naming `turso` by different
+/// specs are two `turso` crates whose types are not the same type.
+pub use ::turso::EncryptionOpts;
 
 #[doc(hidden)]
 pub mod driver {

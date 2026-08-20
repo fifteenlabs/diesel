@@ -437,7 +437,16 @@ impl TursoConnection {
     /// makes the state a migration runs under depend on which call site
     /// opened it. See the paragraph below for why the default is not
     /// "whatever the engine does".
-    async fn open(database_url: &str, multiprocess_wal: bool) -> ConnectionResult<Self> {
+    ///
+    /// Encryption is a parameter, because only the caller knows the key.
+    /// `Some` means every page of the main database and its WAL is written
+    /// through the named cipher; the key is the caller's to keep, and there
+    /// is no way to recover the contents without it.
+    async fn open(
+        database_url: &str,
+        multiprocess_wal: bool,
+        encryption: Option<turso::EncryptionOpts>,
+    ) -> ConnectionResult<Self> {
         let is_in_memory = database_url.is_empty() || database_url == ":memory:";
         let mut builder = turso::Builder::new_local(database_url)
             .experimental_strict(true)
@@ -446,6 +455,17 @@ impl TursoConnection {
             .experimental_index_method(true);
         if multiprocess_wal && !is_in_memory {
             builder = builder.experimental_multiprocess_wal(true);
+        }
+        // Both calls are needed and neither implies the other: the opts carry
+        // the cipher and key, and `experimental_encryption` is what puts
+        // "encryption" in the feature string the engine checks. Passing the
+        // opts alone is not a quietly unencrypted database — the open fails
+        // with "encryption is experimental and must be explicitly enabled" —
+        // but that is a runtime error where this is a compile-time pairing.
+        if let Some(encryption) = encryption {
+            builder = builder
+                .experimental_encryption(true)
+                .with_encryption(encryption);
         }
         let db = builder.build().await.map_err(turso_to_connection)?;
         let conn = db.connect().map_err(turso_to_connection)?;
@@ -493,7 +513,27 @@ impl TursoConnection {
     /// `fifteen db` CLI can read it live. (The CLI can still query the
     /// single-process stores while the app is closed.)
     pub async fn establish_single_process(database_url: &str) -> ConnectionResult<Self> {
-        Self::open(database_url, false).await
+        Self::open(database_url, false, None).await
+    }
+
+    /// Establish a single-process connection to an encrypted database.
+    ///
+    /// The same door as [`Self::establish_single_process`], with every page
+    /// of the database and its WAL written through `encryption.cipher` under
+    /// `encryption.hexkey`. Both fields are the caller's: the cipher names
+    /// one of Turso's (`aegis256`, `aes256gcm`, …) and the key is its key
+    /// length in lowercase hex.
+    ///
+    /// Opening an encrypted file without the key — or with the wrong one —
+    /// fails here rather than returning a connection that reads gibberish.
+    /// There is no rekey: Turso's builder takes the key at open time and has
+    /// no equivalent of SQLCipher's `PRAGMA rekey`, so changing a key means
+    /// copying the contents into a file opened under the new one.
+    pub async fn establish_single_process_encrypted(
+        database_url: &str,
+        encryption: turso::EncryptionOpts,
+    ) -> ConnectionResult<Self> {
+        Self::open(database_url, false, Some(encryption)).await
     }
 
     /// What the statement cache has admitted, hit and refused so far.
@@ -790,7 +830,7 @@ impl AsyncConnection for TursoConnection {
         // whatsapp.db) use `establish_single_process` to dodge the
         // multiprocess-WAL checkpoint bug. Every door enforces foreign keys;
         // there is no longer one that doesn't.
-        async move { Self::open(&url, true).await }
+        async move { Self::open(&url, true, None).await }
     }
 
     fn transaction_state(

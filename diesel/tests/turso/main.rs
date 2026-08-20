@@ -20,6 +20,7 @@ mod database_errors;
 mod datetime_storage;
 mod datetime_support;
 mod deserialization_errors;
+mod encryption;
 mod expr_functions;
 mod foreign_keys;
 mod joins;
