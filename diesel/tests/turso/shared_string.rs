@@ -109,3 +109,35 @@ async fn shared_string_roundtrip() -> Result<()> {
     assert!(sql.contains("CREATE TYPE person AS UNION(user user_t, bot TEXT)"));
     Ok(())
 }
+
+/// A `SharedString` comes off a Turso row through Turso's own `FromSql`,
+/// not through the generic one in `type_impls::primitives` — which is what
+/// keeps a `String` out of the middle of every TEXT column.
+///
+/// This is a compile-time assertion as much as a runtime one: the generic
+/// impl is bounded on `*const str: FromSql<ST, Turso>`, which Turso does not
+/// satisfy, so naming this impl at all only resolves because
+/// `crate::turso::types` writes one. If that impl were deleted the call
+/// below would not compile.
+#[test]
+fn shared_string_is_decoded_by_turso_own_from_sql() {
+    use diesel::deserialize::FromSql;
+    use diesel::sql_types::Text;
+    use diesel::turso::driver::Value;
+    use diesel::turso::{Turso, TursoValue};
+
+    // Either side of the inline/heap boundary a `SmolStr`-backed
+    // `SharedString` has, so neither path is left unread.
+    for text in ["short", "a value well past any small-string optimisation"] {
+        let value = Value::Text(text.to_owned());
+        let decoded =
+            <SharedString as FromSql<Text, Turso>>::from_sql(TursoValue::new(&value)).unwrap();
+        assert_eq!(decoded, SharedString::from(text.to_owned()));
+    }
+
+    // And it refuses a column that is not text, rather than stringifying it.
+    let value = Value::Integer(7);
+    let error = <SharedString as FromSql<Text, Turso>>::from_sql(TursoValue::new(&value))
+        .expect_err("an integer is not a Text column");
+    assert!(error.to_string().contains("expected Text"), "{error}");
+}
