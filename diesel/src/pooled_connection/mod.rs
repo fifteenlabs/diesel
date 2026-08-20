@@ -43,10 +43,10 @@ impl std::error::Error for PoolError {}
 
 /// Type of the custom setup closure passed to [`ManagerConfig::custom_setup`]
 pub type SetupCallback<C> =
-    Box<dyn Fn(&str) -> BoxFuture<crate::ConnectionResult<C>> + Send + Sync>;
+    Box<dyn Fn(&str) -> BoxFuture<'_, crate::ConnectionResult<C>> + Send + Sync>;
 
 /// Type of the recycle check callback for the [`RecyclingMethod::CustomFunction`] variant
-pub type RecycleCheckCallback<C> = dyn Fn(&mut C) -> BoxFuture<QueryResult<()>> + Send + Sync;
+pub type RecycleCheckCallback<C> = dyn Fn(&mut C) -> BoxFuture<'_, QueryResult<()>> + Send + Sync;
 
 /// Possible methods of how a connection is recycled.
 #[derive(Default)]
@@ -96,6 +96,18 @@ pub struct ManagerConfig<C> {
     /// This can be used to for example establish a SSL secured
     /// postgres connection
     pub custom_setup: SetupCallback<C>,
+}
+
+// `custom_setup` is a closure, so this cannot be derived. The crate's
+// `missing_debug_implementations` lint wants it all the same, and a public
+// config struct that cannot be printed is awkward for a caller debugging a
+// pool anyway.
+impl<C: fmt::Debug> fmt::Debug for ManagerConfig<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ManagerConfig")
+            .field("recycling_method", &self.recycling_method)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<C> Default for ManagerConfig<C>

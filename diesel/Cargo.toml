@@ -152,6 +152,20 @@ path = "tests/turso_shared_string.rs"
 harness = true
 required-features = ["turso", "gpui"]
 
+# `TursoConnection` behind bb8 and deadpool, in a target of its own for the
+# same reason as the one above: naming `bb8` and `deadpool` in the suite's
+# `required-features` makes the whole suite unselectable without them, and
+# only one module needs them. It needs to exist at all because the bounds on
+# a connection manager are checked where the manager is instantiated —
+# nothing else in this repository names `TursoConnection` as a pooled type,
+# so without this target `impl PoolableConnection for TursoConnection` reads
+# as dead code. It was deleted on those grounds once already.
+[[test]]
+name = "turso_pooling"
+path = "tests/turso_pooling.rs"
+harness = true
+required-features = ["turso", "bb8", "deadpool"]
+
 [features]
 default = ["with-deprecated", "32-column-tables"]
 extras = ["chrono", "time", "serde_json", "uuid", "network-address", "numeric", "r2d2"]

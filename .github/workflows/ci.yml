@@ -325,6 +325,17 @@ jobs:
           RUSTFLAGS: -D warnings
         run: cargo test -p diesel --test turso --features "turso chrono"
 
+      # `TursoConnection` behind bb8 and deadpool. Its own step because it is
+      # its own target, and it is its own target because the pool features
+      # would otherwise be required to select the suite above. Worth a step
+      # of its own: `impl PoolableConnection for TursoConnection` has no
+      # in-tree caller besides this, so nothing else would notice it going.
+      - name: Run the pooling tests
+        shell: bash
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo test -p diesel --test turso_pooling --features "turso bb8 deadpool"
+
       # Filtered to `turso_union` on purpose: `diesel_derives`' remaining lib
       # tests are `insta` snapshots that already fail on this workspace with
       # no turso feature involved. `-D warnings` is off here because this step
