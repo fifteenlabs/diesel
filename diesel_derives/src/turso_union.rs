@@ -47,6 +47,10 @@
 //!   variants may name the same type, in which case one statement is
 //!   emitted (they must then have identical field lists, which the golden
 //!   test checks).
+//! * `#[union(name = "…")]` on a struct variant's field — its member name in
+//!   the `CREATE TYPE … AS STRUCT(…)` declaration, and therefore the name
+//!   `struct_extract(…, '<name>')` resolves. Defaults to the field ident, so
+//!   a Rust field can be renamed without the stored declaration moving.
 //! * `#[union(sql_type = …)]` on a field — the SQL type it is stored as,
 //!   overriding [`TursoFieldType`]'s default for its Rust type. The escape
 //!   hatch for a Rust type whose storage is a per-field decision rather
@@ -619,6 +623,9 @@ enum VariantShape {
 struct ParsedField {
     ident: Ident,
     ty: syn::Type,
+    /// `#[union(name = "…")]`, when the STRUCT member is not to be called
+    /// what the Rust field is.
+    name: Option<String>,
     /// `#[union(sql_type = …)]`, when the type's `TursoFieldType` default
     /// is not what this field wants.
     sql_type: Option<syn::Type>,
@@ -629,7 +636,10 @@ impl ParsedField {
     /// therefore as `struct_extract(…, '<name>')` has to spell it. Same rule
     /// and same hazard as a variant tag — see [`stored_name`].
     fn stored_name(&self) -> String {
-        stored_name(&self.ident.to_string())
+        match &self.name {
+            Some(name) => stored_name(name),
+            None => stored_name(&self.ident.to_string()),
+        }
     }
 
     /// The SQL type this field encodes through — the override if there is
@@ -700,11 +710,12 @@ impl ParsedVariant {
                         ));
                     }
                     let field_attrs = UnionAttrs::parse(&only.attrs)?;
-                    field_attrs.reject(&only.attrs, &["sql_type"], "a field")?;
+                    field_attrs.reject(&only.attrs, &["sql_type"], "a scalar variant's field")?;
                     VariantShape::Scalar {
                         field: Box::new(ParsedField {
                             ident: format_ident!("__v"),
                             ty,
+                            name: None,
                             sql_type: field_attrs.sql_type,
                         }),
                     }
@@ -972,10 +983,11 @@ impl ParsedVariant {
 impl ParsedField {
     fn from_syn(f: &syn::Field) -> syn::Result<Self> {
         let attrs = UnionAttrs::parse(&f.attrs)?;
-        attrs.reject(&f.attrs, &["sql_type"], "a field")?;
+        attrs.reject(&f.attrs, &["sql_type", "name"], "a field")?;
         Ok(Self {
             ident: f.ident.clone().expect("named field"),
             ty: f.ty.clone(),
+            name: attrs.name,
             sql_type: attrs.sql_type,
         })
     }
@@ -1308,6 +1320,49 @@ mod tests {
             "#,
         )
         .expect("a union with ordinary tags expands");
+    }
+
+    /// `#[union(name = "…")]` on a struct variant's field renames the STRUCT
+    /// member and nothing else; on a scalar variant's field there is no
+    /// member to rename, so it is refused rather than ignored.
+    #[test]
+    fn a_field_name_override_lands_in_the_struct_declaration() {
+        let expanded = expand(
+            r#"
+            enum K {
+                Telegram {
+                    #[union(name = "chat")]
+                    chat_id: i64,
+                    text: String,
+                },
+            }
+            "#,
+        )
+        .expect("a renamed field expands")
+        .to_string();
+        assert!(
+            expanded.contains(r#"["chat" , "text"]"#),
+            "FIELD_NAMES — what struct_extract spells — has to carry the override. \
+             Got: {expanded}"
+        );
+        assert!(
+            !expanded.contains(r#"["chat_id" , "text"]"#),
+            "the Rust ident must not reach the stored names. Got: {expanded}"
+        );
+
+        let err = expand(
+            r#"
+            enum K {
+                #[union(tag = "whatsapp")]
+                WhatsApp(#[union(name = "x")] i64),
+            }
+            "#,
+        )
+        .expect_err("a scalar variant's field has no member to rename");
+        assert!(
+            err.to_string().contains("scalar variant"),
+            "the diagnostic names where the key is not allowed. Got: {err}"
+        );
     }
 
     fn expand(src: &str) -> syn::Result<proc_macro2::TokenStream> {

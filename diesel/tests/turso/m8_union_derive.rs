@@ -8,7 +8,9 @@ use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
 use diesel::prelude::*;
-use diesel::turso::union::{TaggedUnion, UnionSchema};
+use diesel::turso::union::{
+    CompositeExpressionMethods, TaggedUnion, UnionExpressionMethods, UnionSchema,
+};
 use diesel::turso::TursoConnection;
 use diesel::UnionSchema as DeriveUnionSchema;
 
@@ -193,12 +195,22 @@ async fn server_still_recognizes_derive_emitted_blob() -> Result<()> {
 #[union(name = "custom_name")]
 pub enum CustomNamed {
     #[union(tag = "alpha_tag")]
-    Alpha {
-        x: i64,
-    },
+    Alpha { x: i64 },
     Beta {
+        #[union(name = "why")]
         y: String,
     },
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use diesel::turso::union::TaggedUnion;
+    use super::CustomNamed;
+
+    custom(id) {
+        id -> BigInt,
+        data -> TaggedUnion<CustomNamed>,
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -208,6 +220,50 @@ async fn attribute_overrides() {
     assert_eq!(CustomNamed::Alpha { x: 1 }.tag(), "alpha_tag");
     let sql = CustomNamed::create_type_sql();
     assert!(sql.contains("CREATE TYPE alpha_tag_t AS STRUCT(x INT);"));
-    assert!(sql.contains("CREATE TYPE beta_t AS STRUCT(y TEXT);"));
+    assert!(sql.contains("CREATE TYPE beta_t AS STRUCT(why TEXT);"));
     assert!(sql.contains("CREATE TYPE custom_name AS UNION(alpha_tag alpha_tag_t, beta beta_t)"));
+}
+
+/// `#[union(name = "…")]` on a field renames the STRUCT member Turso keeps,
+/// and every projection through the derive follows it: the declaration is
+/// accepted as written, the wire value round-trips, and `.field(beta::y)` —
+/// spelled with the Rust ident — resolves against the stored name.
+#[tokio::test(flavor = "current_thread")]
+async fn a_renamed_field_is_declared_and_extracted_under_its_stored_name() -> Result<()> {
+    use custom_named::beta;
+
+    let mut conn = TursoConnection::establish(":memory:").await?;
+    conn.batch_execute(&CustomNamed::create_type_sql()).await?;
+    conn.batch_execute(
+        "CREATE TABLE custom(id INTEGER PRIMARY KEY, data custom_name NOT NULL) STRICT",
+    )
+    .await?;
+
+    for (id, data) in [
+        (1i64, CustomNamed::Alpha { x: 5 }),
+        (2, CustomNamed::Beta { y: "hi".into() }),
+        (3, CustomNamed::Beta { y: "yo".into() }),
+    ] {
+        diesel::insert_into(custom::table)
+            .values((custom::id.eq(id), custom::data.eq(data)))
+            .execute(&mut conn)
+            .await?;
+    }
+
+    let query = custom::table
+        .filter(custom::data.extract(beta::variant).field(beta::y).eq("hi"))
+        .select(custom::id);
+    let rendered = diesel::debug_query::<diesel::turso::Turso, _>(&query).to_string();
+    assert!(
+        rendered.contains(r#"struct_extract(union_extract("custom"."data", 'beta'), 'why')"#),
+        "the field marker has to spell the stored name, not the Rust ident: {rendered}"
+    );
+    assert_eq!(query.load::<i64>(&mut conn).await?, vec![2]);
+
+    let back: Vec<(i64, CustomNamed)> = custom::table
+        .order(custom::id.asc())
+        .load(&mut conn)
+        .await?;
+    assert_eq!(back[1], (2, CustomNamed::Beta { y: "hi".into() }));
+    Ok(())
 }
