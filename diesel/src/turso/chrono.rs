@@ -174,3 +174,30 @@ impl FromSql<crate::turso::sql_types::Timestamptz, Turso> for DateTime<Utc> {
         Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
     }
 }
+
+// -- DateTime<Utc> ↔ BigInt (Unix milliseconds) ------------------------------
+//
+// A timestamp column does not have to be text. Storing one as an integer
+// count of milliseconds since the epoch keeps it fixed-width, orders and
+// range-scans as a number, and compares byte for byte in a composite key,
+// none of which a formatted string does well. Turso applications that take
+// that route otherwise have to carry the conversion themselves, in a proxy
+// type per crate, because `BigInt` and `chrono` are both foreign to them
+// and the orphan rule leaves nowhere to put the impl. It belongs here.
+//
+// The unit is milliseconds, not seconds: it is what `timestamp_millis`
+// gives, and picking one and stating it is the whole point — a column read
+// through this impl cannot disagree with the one that wrote it.
+impl ToSql<sql_types::BigInt, Turso> for DateTime<Utc> {
+    fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
+        out.set_value(self.timestamp_millis());
+        Ok(IsNull::No)
+    }
+}
+impl FromSql<sql_types::BigInt, Turso> for DateTime<Utc> {
+    fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
+        let millis: i64 = FromSql::<sql_types::BigInt, Turso>::from_sql(v)?;
+        DateTime::from_timestamp_millis(millis)
+            .ok_or_else(|| format!("{millis} is too far from the epoch to be a timestamp").into())
+    }
+}

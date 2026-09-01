@@ -52,6 +52,7 @@ mod chrono {
         feature = "turso",
         diesel(sql_type = crate::turso::sql_types::Timestamptz)
     )]
+    #[cfg_attr(feature = "turso", diesel(sql_type = crate::sql_types::BigInt))]
     struct DateTimeProxy<Tz: TimeZone>(DateTime<Tz>);
 
     #[derive(AsExpression, FromSqlRow)]
