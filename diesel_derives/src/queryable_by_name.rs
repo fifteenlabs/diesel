@@ -94,6 +94,7 @@ pub fn derive(item: DeriveInput) -> Result<TokenStream> {
             for #struct_name #ty_generics
         #where_clause
         {
+            #[allow(clippy::redundant_field_names)]
             fn build<'__a>(row: &impl diesel::row::NamedRow<'__a, __DB>) -> diesel::deserialize::Result<Self>
             {
                 #(
