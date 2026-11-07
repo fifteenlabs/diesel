@@ -70,7 +70,7 @@ pub mod value;
 pub use self::array_comparison::JsonList;
 pub use self::backend::{Turso, TursoJsonArrayComparison, TursoQueryBuilder, TursoType};
 pub use self::bind::{TursoBindBuffer, TursoBindCollector};
-pub use self::connection::{StatementCacheStats, TursoConnection};
+pub use self::connection::{Cancellable, StatementCacheStats, TursoConnection, CANCEL_CHECK_OPS};
 pub use self::error::{turso_to_connection, turso_to_diesel};
 pub use self::row::{TursoField, TursoRow};
 pub use self::value::TursoValue;

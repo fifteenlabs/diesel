@@ -13,6 +13,7 @@
 mod aggregate_expressions;
 mod array_comparison;
 mod batch_insert;
+mod cancellation;
 mod case_expression;
 mod chrono_support;
 mod compiles_m1;

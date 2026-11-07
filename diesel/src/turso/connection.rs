@@ -403,6 +403,40 @@ impl StatementCache {
     }
 }
 
+/// How many virtual machine instructions run between two checks of a
+/// [`TursoConnection::cancel_when`] condition. The check is a closure call, so
+/// this keeps its cost negligible while still stopping a statement within
+/// microseconds of being cancelled.
+pub const CANCEL_CHECK_OPS: u64 = 1000;
+
+/// A [`TursoConnection`] whose statements stop when a condition turns true.
+/// Returned by [`TursoConnection::cancel_when`]; dereferences to the
+/// connection, and removes the condition when dropped.
+#[allow(missing_debug_implementations)]
+pub struct Cancellable<'a> {
+    conn: &'a mut TursoConnection,
+}
+
+impl std::ops::Deref for Cancellable<'_> {
+    type Target = TursoConnection;
+
+    fn deref(&self) -> &TursoConnection {
+        self.conn
+    }
+}
+
+impl std::ops::DerefMut for Cancellable<'_> {
+    fn deref_mut(&mut self) -> &mut TursoConnection {
+        self.conn
+    }
+}
+
+impl Drop for Cancellable<'_> {
+    fn drop(&mut self) {
+        let _ = self.conn.conn.set_progress_handler(0, None::<fn() -> bool>);
+    }
+}
+
 /// Async connection to a Turso database.
 #[allow(missing_debug_implementations)]
 pub struct TursoConnection {
@@ -419,6 +453,31 @@ impl TursoConnection {
     /// queries that the diesel DSL can't express (and for tests).
     pub fn raw(&self) -> &turso::Connection {
         &self.conn
+    }
+
+    /// Lend this connection out for statements that stop as soon as
+    /// `cancelled` returns `true`.
+    ///
+    /// The check runs inside the engine every [`CANCEL_CHECK_OPS`] virtual
+    /// machine instructions, on the thread executing the statement, so it
+    /// stops a statement that never yields to the executor — a scan over
+    /// cached pages runs to completion inside one poll, which neither
+    /// dropping its future nor aborting its task can interrupt. A stopped
+    /// statement fails with
+    /// [`DatabaseErrorKind::Interrupted`](crate::result::DatabaseErrorKind::Interrupted).
+    ///
+    /// The check is removed when the returned guard drops, so a connection
+    /// handed back to a pool never stops someone else's statement.
+    pub fn cancel_when<F>(&mut self, cancelled: F) -> Cancellable<'_>
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        // `set_progress_handler` only fails on a connection whose inner
+        // handle was already taken, which a live `TursoConnection` never is.
+        let _ = self
+            .conn
+            .set_progress_handler(CANCEL_CHECK_OPS, Some(cancelled));
+        Cancellable { conn: self }
     }
 
     /// Open a Turso connection, optionally enabling multiprocess WAL.

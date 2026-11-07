@@ -9,10 +9,11 @@ use crate::result::{ConnectionError, DatabaseErrorKind, Error as DieselError};
 /// `DatabaseErrorKind::Unknown`. Refine this mapping as turso's error
 /// taxonomy grows.
 pub fn turso_to_diesel(e: turso::Error) -> DieselError {
-    DieselError::DatabaseError(
-        DatabaseErrorKind::Unknown,
-        Box::new(TursoDbError(e.to_string())),
-    )
+    let kind = match e {
+        turso::Error::Interrupt(_) => DatabaseErrorKind::Interrupted,
+        _ => DatabaseErrorKind::Unknown,
+    };
+    DieselError::DatabaseError(kind, Box::new(TursoDbError(e.to_string())))
 }
 
 /// Same as [`turso_to_diesel`] but wrapped as a `ConnectionError` for the
