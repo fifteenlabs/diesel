@@ -51,7 +51,7 @@ turso = { git = "https://github.com/fifteenlabs/turso", branch = "fif-progress-h
 # quoted? Same URL and ref as `turso` above so the two resolve to one source
 # and one commit — the keyword list the derive consults is then, by
 # construction, the list the engine it is generating SQL for uses.
-turso_parser = { git = "https://github.com/tursodatabase/turso", branch = "main", default-features = false }
+turso_parser = { git = "https://github.com/fifteenlabs/turso", branch = "fif-progress-handler", default-features = false }
 libsqlite3-sys = ">=0.30.1,<0.36.0"
 pq-sys = ">=0.6,<0.8"
 openssl-sys = "0.9.100"
