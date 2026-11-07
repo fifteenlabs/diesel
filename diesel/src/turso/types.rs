@@ -11,7 +11,7 @@ use crate::serialize::{self, IsNull, Output, ToSql};
 use crate::sql_types;
 
 use crate::turso::backend::Turso;
-use crate::turso::value::{mismatch, TursoValue};
+use crate::turso::value::{TursoValue, mismatch};
 
 // Widening integer codecs share the same shape: emit Value::Integer on
 // encode, narrow-and-validate on decode.
@@ -82,6 +82,8 @@ macro_rules! real_codec {
         impl FromSql<$sql_ty, Turso> for $rust_ty {
             fn from_sql(v: TursoValue<'_>) -> deserialize::Result<Self> {
                 match v.as_turso() {
+                    // Narrowing to `f32` is what reading a REAL as `Float` means.
+                    #[allow(clippy::cast_possible_truncation)]
                     turso::Value::Real(f) => Ok(*f as $rust_ty),
                     turso::Value::Integer(i) => Ok(*i as $rust_ty),
                     other => mismatch(stringify!($rust_ty), other),

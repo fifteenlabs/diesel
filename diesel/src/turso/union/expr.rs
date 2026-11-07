@@ -90,7 +90,7 @@
 //!
 //! [`codec`]: super::codec
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::expression::{AppearsOnTable, Expression, SelectableExpression, TypedExpressionType};
 use crate::query_builder::{AstPass, QueryFragment, QueryId};

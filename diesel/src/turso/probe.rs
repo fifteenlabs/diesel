@@ -44,11 +44,11 @@
 //! today, they live next to the enums they name, and a dependency whose
 //! whole job is to save an array literal is not earned.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use crate::turso::connection::TursoConnection;
 use crate::turso::union::ddl::{
-    check_declarations, index_by_name, parse_create_types, DeclarationDrift, TypeDecl,
+    DeclarationDrift, TypeDecl, check_declarations, index_by_name, parse_create_types,
 };
 
 /// One composite type the app will bind values against, and where its
@@ -91,8 +91,8 @@ pub struct TypeDriftError {
     pub drift: Vec<(&'static str, DeclarationDrift)>,
 }
 
-impl std::fmt::Display for TypeDriftError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TypeDriftError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         writeln!(
             f,
             "this database's composite type declarations do not match this build's:"
@@ -111,7 +111,7 @@ impl std::fmt::Display for TypeDriftError {
     }
 }
 
-impl std::error::Error for TypeDriftError {}
+impl core::error::Error for TypeDriftError {}
 
 /// Why a database could not be certified. Kept as two arms so a caller can
 /// tell "this file disagrees with this binary" from "this file could not be

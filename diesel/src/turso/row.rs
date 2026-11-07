@@ -1,7 +1,7 @@
 //! `TursoRow` / `TursoField` — diesel `Row` and `Field` impls over a
 //! buffered row from `turso::Connection::query`.
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use crate::backend::Backend;
 use crate::row::{Field, PartialRow, Row, RowIndex, RowSealed};
@@ -16,7 +16,7 @@ use crate::turso::value::TursoValue;
 pub struct TursoRow<'a> {
     values: Vec<turso::Value>,
     column_names: Arc<[String]>,
-    _lt: std::marker::PhantomData<&'a ()>,
+    _lt: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> TursoRow<'a> {
@@ -29,7 +29,7 @@ impl<'a> TursoRow<'a> {
         Self {
             values,
             column_names,
-            _lt: std::marker::PhantomData,
+            _lt: core::marker::PhantomData,
         }
     }
 }
@@ -56,7 +56,7 @@ impl<'a> Row<'a, Turso> for TursoRow<'a> {
         Some(TursoField { row: self, col })
     }
 
-    fn partial_row(&self, range: std::ops::Range<usize>) -> PartialRow<'_, Self::InnerPartialRow> {
+    fn partial_row(&self, range: core::ops::Range<usize>) -> PartialRow<'_, Self::InnerPartialRow> {
         PartialRow::new(self, range)
     }
 }

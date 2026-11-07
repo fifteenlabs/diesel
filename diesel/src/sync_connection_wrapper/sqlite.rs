@@ -1,5 +1,5 @@
-use crate::connection::AnsiTransactionManager;
 use crate::SqliteConnection;
+use crate::connection::AnsiTransactionManager;
 use scoped_futures::ScopedBoxFuture;
 
 use crate::connection::AsyncTransactionManager;

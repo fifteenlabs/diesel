@@ -109,7 +109,7 @@
 //! module. They are [`Subselect`](crate::expression::subselect::Subselect),
 //! not [`Many`], and were always a single fixed text.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::expression::array_comparison::{In, InExpression, Many, NotIn};
 use crate::query_builder::{AstPass, QueryFragment};

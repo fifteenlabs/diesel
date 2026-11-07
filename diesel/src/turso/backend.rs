@@ -7,7 +7,7 @@
 //! directly rather than going through a byte buffer).
 
 use crate::backend::{
-    sql_dialect, Backend, DieselReserveSpecialization, SqlDialect, TrustedBackend,
+    Backend, DieselReserveSpecialization, SqlDialect, TrustedBackend, sql_dialect,
 };
 use crate::query_builder::QueryBuilder;
 use crate::sql_types::{self, HasSqlType, TypeMetadata};
@@ -62,6 +62,7 @@ impl SqlDialect for Turso {
     type InsertWithDefaultKeyword =
         sql_dialect::default_keyword_for_insert::DoesNotSupportDefaultKeyword;
     type BatchInsertSupport = sql_dialect::batch_insert_support::SqliteLikeBatchInsertSupport;
+    type BatchUpdateSupport = sql_dialect::batch_update_support::DoesNotSupportBatchUpdate;
     type ConcatClause = sql_dialect::concat_clause::ConcatWithPipesClause;
     type DefaultValueClauseForInsert = sql_dialect::default_value_clause::AnsiDefaultValueClause;
     type EmptyFromClauseSyntax = sql_dialect::from_clause_syntax::AnsiSqlFromClauseSyntax;
@@ -115,6 +116,8 @@ impl SqlDialect for Turso {
     // that survives both the compiler and the parser: it fails at run time.
     // See [`LiteralSubselectLimit`].
     type SubselectLimitSyntax = LiteralSubselectLimit;
+    type SqlFunctionParameterNotation =
+        sql_dialect::sql_function_parameter_notation::PositionalNotationOnly;
 }
 
 /// Marker for [`SqlDialect::ArrayComparison`]: bind an `IN (…)` list as a

@@ -473,7 +473,7 @@ pub mod async_dsl {
 
     #[doc(inline)]
     pub use crate::query_dsl::async_run_query_dsl::{
-        methods, return_futures, RunQueryDsl, SaveChangesDsl, UpdateAndFetchResults,
+        RunQueryDsl, SaveChangesDsl, UpdateAndFetchResults, methods, return_futures,
     };
 }
 

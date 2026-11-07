@@ -1,16 +1,16 @@
+use crate::QueryResult;
 use crate::connection::InstrumentationEvent;
 use crate::connection::TransactionManagerStatus;
 use crate::connection::{
     InTransactionStatus, TransactionDepthChange, ValidTransactionManagerStatus,
 };
 use crate::result::Error;
-use crate::QueryResult;
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
+use core::future::Future;
+use core::num::NonZeroU32;
+use core::sync::atomic::{AtomicBool, Ordering};
 use scoped_futures::ScopedBoxFuture;
-use std::borrow::Cow;
-use std::future::Future;
-use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use crate::connection::AsyncConnection;
 // TODO: refactor this to share more code with diesel
@@ -199,7 +199,7 @@ impl AnsiAsyncTransactionManager {
     // the connection in the event of a canceled transaction execution
     async fn critical_transaction_block<F>(is_broken: &AtomicBool, f: F) -> F::Output
     where
-        F: std::future::Future,
+        F: core::future::Future,
     {
         let was_broken = is_broken.swap(true, Ordering::Relaxed);
         debug_assert!(

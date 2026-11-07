@@ -130,3 +130,21 @@ async fn boxed_limit_and_offset() -> Result<()> {
     assert_eq!(got.iter().map(|i| i.id).collect::<Vec<_>>(), vec![3, 4]);
     Ok(())
 }
+
+/// `into_boxed_clone` boxes the limit/offset clause behind an `Arc` rather
+/// than a `Box`, through impls of its own; the offset-only shape is the one
+/// that needs the injected `LIMIT -1`, and the clone has to render it too.
+#[tokio::test(flavor = "current_thread")]
+async fn boxed_clone_offset_only_and_its_clone() -> Result<()> {
+    let mut conn = seed().await?;
+    let query = items::table
+        .order(items::id.asc())
+        .into_boxed_clone()
+        .offset(3);
+    let cloned = query.clone();
+    let got: Vec<Item> = query.load(&mut conn).await?;
+    let got_again: Vec<Item> = cloned.limit(1).load(&mut conn).await?;
+    assert_eq!(got.iter().map(|i| i.id).collect::<Vec<_>>(), vec![4, 5]);
+    assert_eq!(got_again.iter().map(|i| i.id).collect::<Vec<_>>(), vec![4]);
+    Ok(())
+}

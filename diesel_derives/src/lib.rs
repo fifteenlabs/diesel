@@ -26,7 +26,7 @@ use proc_macro::TokenStream;
 use sql_function::ExternSqlBlock;
 use syn::parse_quote;
 #[cfg(feature = "turso")]
-use syn::{parse_macro_input, DeriveInput};
+use syn::{DeriveInput, parse_macro_input};
 
 mod allow_tables_to_appear_in_same_query;
 mod field;

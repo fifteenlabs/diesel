@@ -1,4 +1,4 @@
-use crate::{result::DatabaseErrorKind, ConnectionError};
+use crate::{ConnectionError, result::DatabaseErrorKind};
 use mysql_async::Error;
 
 pub(super) struct ErrorHelper(pub(super) Error);

@@ -1,9 +1,9 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 
 use crate::QueryResult;
-use futures_core::{ready, TryFuture, TryStream};
+use futures_core::{TryFuture, TryStream, ready};
 use futures_util::{TryFutureExt, TryStreamExt};
 use pin_project_lite::pin_project;
 

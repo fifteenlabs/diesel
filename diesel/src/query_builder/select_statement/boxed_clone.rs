@@ -646,5 +646,11 @@ mod tests {
 
         #[cfg(feature = "mariadb")]
         assert_boxed_query_send!(crate::mariadb::Mariadb);
+
+        // Turso as well, for the same reason as in `boxed.rs`: without an
+        // arm, `--features turso` alone leaves `assert_send` and the macro
+        // dead, which `-D warnings` refuses.
+        #[cfg(feature = "turso")]
+        assert_boxed_query_send!(crate::turso::Turso);
     }
 }

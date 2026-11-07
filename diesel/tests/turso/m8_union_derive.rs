@@ -3,14 +3,14 @@
 //! (UnionSchema, ToSql, FromSql) are all macro-generated.
 
 use anyhow::Result;
+use diesel::UnionSchema as DeriveUnionSchema;
 use diesel::async_dsl::RunQueryDsl;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
 use diesel::prelude::*;
-use diesel::turso::union::{TaggedUnion, UnionSchema};
 use diesel::turso::TursoConnection;
-use diesel::UnionSchema as DeriveUnionSchema;
+use diesel::turso::union::{TaggedUnion, UnionSchema};
 
 #[derive(
     Debug,

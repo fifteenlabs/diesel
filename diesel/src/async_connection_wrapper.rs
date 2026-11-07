@@ -9,10 +9,10 @@
 //!   as replacement for the existing connection
 //!   implementations provided by diesel
 
+use core::future::Future;
+use core::pin::Pin;
 use futures_core::Stream;
 use futures_util::StreamExt;
-use std::future::Future;
-use std::pin::Pin;
 
 /// This is a helper trait that allows to customize the
 /// async runtime used to execute futures as part of the
@@ -101,7 +101,7 @@ pub use self::implementation::AsyncConnectionWrapper;
 
 pub(crate) mod implementation {
     use crate::connection::{CacheSize, Instrumentation, SimpleConnection};
-    use std::ops::{Deref, DerefMut};
+    use core::ops::{Deref, DerefMut};
 
     use super::*;
 
@@ -386,7 +386,7 @@ pub(crate) mod implementation {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_io()
                     .build()
-                    .unwrap();
+                    .expect("failed to build the tokio runtime for AsyncConnectionWrapper");
                 Self {
                     handle: None,
                     runtime: Some(runtime),

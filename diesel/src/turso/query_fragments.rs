@@ -15,14 +15,17 @@ use crate::insertable::{ColumnInsertValue, DefaultableColumnInsertValue, InsertV
 use crate::query_builder::from_clause::NoFromClause;
 use crate::query_builder::insert_statement::{InsertOrIgnore, Replace};
 use crate::query_builder::limit_clause::{LimitClause, NoLimitClause};
-use crate::query_builder::limit_offset_clause::{BoxedLimitOffsetClause, LimitOffsetClause};
+use crate::query_builder::limit_offset_clause::{
+    BoxedCloneLimitOffsetClause, BoxedLimitOffsetClause, LimitOffsetClause,
+};
 use crate::query_builder::offset_clause::{NoOffsetClause, OffsetClause};
-use crate::query_builder::select_statement::boxed::{BoxedQueryHelper, BoxedSelectStatement};
 use crate::query_builder::select_statement::SelectStatement;
+use crate::query_builder::select_statement::boxed::{BoxedQueryHelper, BoxedSelectStatement};
 use crate::query_builder::upsert::into_conflict_clause::OnConflictSelectWrapper;
 use crate::query_builder::where_clause::{BoxedWhereClause, WhereClause};
-use crate::query_builder::{AstPass, IntoBoxedClause, QueryFragment};
+use crate::query_builder::{AstPass, IntoBoxedClause, IntoBoxedCloneClause, QueryFragment};
 use crate::{Column, QueryResult};
+use alloc::sync::Arc;
 
 use crate::sql_types::BigInt;
 use crate::turso::backend::{LiteralSubselectLimit, Turso};
@@ -152,21 +155,40 @@ where
     }
 }
 
-impl QueryFragment<Turso> for BoxedLimitOffsetClause<'_, Turso> {
-    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Turso>) -> QueryResult<()> {
-        match (self.limit.as_ref(), self.offset.as_ref()) {
-            (Some(limit), Some(offset)) => {
-                limit.walk_ast(out.reborrow())?;
-                offset.walk_ast(out.reborrow())?;
-            }
-            (Some(limit), None) => limit.walk_ast(out.reborrow())?,
-            (None, Some(offset)) => {
-                out.push_sql(LIMIT_NEG_ONE);
-                offset.walk_ast(out.reborrow())?;
-            }
-            (None, None) => {}
+/// Walk the limit and the offset of a boxed limit/offset clause, whichever
+/// pointer holds them — `Box` for `into_boxed`, `Arc` for `into_boxed_clone`.
+fn walk_boxed_limit_offset<'b, P>(
+    limit: Option<&'b P>,
+    offset: Option<&'b P>,
+    mut out: AstPass<'_, 'b, Turso>,
+) -> QueryResult<()>
+where
+    P: QueryFragment<Turso>,
+{
+    match (limit, offset) {
+        (Some(limit), Some(offset)) => {
+            limit.walk_ast(out.reborrow())?;
+            offset.walk_ast(out.reborrow())?;
         }
-        Ok(())
+        (Some(limit), None) => limit.walk_ast(out.reborrow())?,
+        (None, Some(offset)) => {
+            out.push_sql(LIMIT_NEG_ONE);
+            offset.walk_ast(out.reborrow())?;
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+impl QueryFragment<Turso> for BoxedLimitOffsetClause<'_, Turso> {
+    fn walk_ast<'b>(&'b self, out: AstPass<'_, 'b, Turso>) -> QueryResult<()> {
+        walk_boxed_limit_offset(self.limit.as_ref(), self.offset.as_ref(), out)
+    }
+}
+
+impl QueryFragment<Turso> for BoxedCloneLimitOffsetClause<'_, Turso> {
+    fn walk_ast<'b>(&'b self, out: AstPass<'_, 'b, Turso>) -> QueryResult<()> {
+        walk_boxed_limit_offset(self.limit.as_ref(), self.offset.as_ref(), out)
     }
 }
 
@@ -216,6 +238,57 @@ where
         BoxedLimitOffsetClause {
             limit: Some(Box::new(self.limit_clause)),
             offset: Some(Box::new(self.offset_clause)),
+        }
+    }
+}
+
+impl<'a> IntoBoxedCloneClause<'a, Turso> for LimitOffsetClause<NoLimitClause, NoOffsetClause> {
+    type BoxedCloneClause = BoxedCloneLimitOffsetClause<'a, Turso>;
+    fn into_boxed_clone(self) -> Self::BoxedCloneClause {
+        BoxedCloneLimitOffsetClause {
+            limit: None,
+            offset: None,
+        }
+    }
+}
+
+impl<'a, L> IntoBoxedCloneClause<'a, Turso> for LimitOffsetClause<LimitClause<L>, NoOffsetClause>
+where
+    LimitClause<L>: QueryFragment<Turso> + Send + Sync + 'a,
+{
+    type BoxedCloneClause = BoxedCloneLimitOffsetClause<'a, Turso>;
+    fn into_boxed_clone(self) -> Self::BoxedCloneClause {
+        BoxedCloneLimitOffsetClause {
+            limit: Some(Arc::new(self.limit_clause)),
+            offset: None,
+        }
+    }
+}
+
+impl<'a, O> IntoBoxedCloneClause<'a, Turso> for LimitOffsetClause<NoLimitClause, OffsetClause<O>>
+where
+    O: QueryFragment<Turso> + Send + Sync + 'a,
+{
+    type BoxedCloneClause = BoxedCloneLimitOffsetClause<'a, Turso>;
+    fn into_boxed_clone(self) -> Self::BoxedCloneClause {
+        BoxedCloneLimitOffsetClause {
+            limit: None,
+            offset: Some(Arc::new(self.offset_clause)),
+        }
+    }
+}
+
+impl<'a, L, O> IntoBoxedCloneClause<'a, Turso>
+    for LimitOffsetClause<LimitClause<L>, OffsetClause<O>>
+where
+    LimitClause<L>: QueryFragment<Turso> + Send + Sync + 'a,
+    O: QueryFragment<Turso> + Send + Sync + 'a,
+{
+    type BoxedCloneClause = BoxedCloneLimitOffsetClause<'a, Turso>;
+    fn into_boxed_clone(self) -> Self::BoxedCloneClause {
+        BoxedCloneLimitOffsetClause {
+            limit: Some(Arc::new(self.limit_clause)),
+            offset: Some(Arc::new(self.offset_clause)),
         }
     }
 }

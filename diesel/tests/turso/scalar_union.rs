@@ -2,14 +2,14 @@
 //! variants. Also covers `uuid::Uuid` as a composite field type.
 
 use anyhow::Result;
+use diesel::UnionSchema as DeriveUnionSchema;
 use diesel::async_dsl::RunQueryDsl;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
 use diesel::prelude::*;
-use diesel::turso::union::{TaggedUnion, UnionSchema};
 use diesel::turso::TursoConnection;
-use diesel::UnionSchema as DeriveUnionSchema;
+use diesel::turso::union::{TaggedUnion, UnionSchema};
 use uuid::Uuid;
 
 // Pure-scalar UNION — the classic `UNION(i INT, f REAL, s TEXT)`.

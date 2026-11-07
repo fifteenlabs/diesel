@@ -9,6 +9,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use diesel::UnionSchema as DeriveUnionSchema;
 use diesel::async_dsl::RunQueryDsl;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::define_sql_function;
@@ -16,9 +17,8 @@ use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
 use diesel::prelude::*;
 use diesel::sql_types::Text;
-use diesel::turso::union::{TaggedUnion, UnionSchema};
 use diesel::turso::TursoConnection;
-use diesel::UnionSchema as DeriveUnionSchema;
+use diesel::turso::union::{TaggedUnion, UnionSchema};
 
 // ----- Scalar datetime columns --------------------------------------------
 

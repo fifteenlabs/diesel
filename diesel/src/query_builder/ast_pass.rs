@@ -108,6 +108,7 @@ where
         AstPass {
             internals: AstPassInternals::CountBinds(count),
             backend,
+            in_subselect: false,
         }
     }
 

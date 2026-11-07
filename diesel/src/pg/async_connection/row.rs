@@ -8,7 +8,7 @@
 use crate::backend::Backend;
 use crate::row::{Field, PartialRow, RowIndex, RowSealed};
 use std::{error::Error, num::NonZeroU32};
-use tokio_postgres::{types::Type, Row};
+use tokio_postgres::{Row, types::Type};
 
 // `diesel` warns on `missing_debug_implementations` where `diesel-async`
 // did not. These hold a live connection, a driver row or a borrowed

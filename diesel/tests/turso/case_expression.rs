@@ -20,9 +20,9 @@ use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::dsl::case_when;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Integer};
-use diesel::turso::expr::{coalesce, max2};
 use diesel::turso::Turso;
 use diesel::turso::TursoConnection;
+use diesel::turso::expr::{coalesce, max2};
 
 diesel::table! {
     jobs(id) {

@@ -52,21 +52,21 @@
 //! or return `false` from [`TypedMigration::run_in_transaction`] when implementing the
 //! trait directly.
 
-mod combined_migrations;
 #[cfg(feature = "async")]
 mod async_harness;
+mod combined_migrations;
 mod embedded_migrations;
 mod errors;
 mod file_based_migrations;
 mod migration_harness;
 mod rust_migrations;
 
-#[cfg(feature = "async")]
-pub use crate::async_harness::AsyncMigrationHarness;
 pub use self::embedded_migrations::EmbeddedMigrations;
 pub use self::file_based_migrations::FileBasedMigrations;
 pub use self::migration_harness::{HarnessWithOutput, MigrationHarness};
 pub use self::rust_migrations::{RustMigration, RustMigrationSource, TypedMigration};
+#[cfg(feature = "async")]
+pub use crate::async_harness::AsyncMigrationHarness;
 pub use combined_migrations::CombinedMigrationSource;
 pub use migrations_macros::embed_migrations;
 

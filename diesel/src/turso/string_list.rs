@@ -23,7 +23,7 @@ use crate::serialize::{self, IsNull, Output, ToSql};
 use crate::sql_types::Text;
 
 use crate::turso::backend::Turso;
-use crate::turso::value::{mismatch, TursoValue};
+use crate::turso::value::{TursoValue, mismatch};
 
 impl ToSql<Text, Turso> for Vec<String> {
     fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
@@ -45,7 +45,7 @@ impl FromSql<Text, Turso> for Vec<String> {
 /// the two cannot drift into different JSON.
 pub(crate) fn encode<'a>(
     items: impl Iterator<Item = &'a str>,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<String, Box<dyn core::error::Error + Send + Sync>> {
     let items: Vec<&str> = items.collect();
     serde_json::to_string(&items).map_err(Into::into)
 }
@@ -71,7 +71,7 @@ mod shared {
     use gpui::SharedString;
 
     use crate::turso::backend::Turso;
-    use crate::turso::value::{mismatch, TursoValue};
+    use crate::turso::value::{TursoValue, mismatch};
 
     impl ToSql<Text, Turso> for Vec<SharedString> {
         fn to_sql(&self, out: &mut Output<'_, '_, Turso>) -> serialize::Result {
@@ -112,7 +112,10 @@ mod tests {
             "e\\f".into(),
             "g\nh".into(),
         ]);
-        roundtrip(vec!["🙂".into(), "Ünïcödé".into()]);
+        roundtrip(vec![
+            "\u{1f642}".into(),
+            "\u{dc}n\u{ef}c\u{f6}d\u{e9}".into(),
+        ]);
     }
 
     #[test]

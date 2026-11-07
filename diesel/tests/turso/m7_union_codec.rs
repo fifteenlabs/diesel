@@ -9,12 +9,12 @@ use diesel::deserialize::{FromSql, FromSqlRow};
 use diesel::expression::AsExpression;
 use diesel::prelude::*;
 use diesel::serialize::{Output, ToSql};
-use diesel::turso::union::{
-    decode_from_blob, decode_record, encode_for_bind, encode_record, DecodeError, TaggedUnion,
-    UnionSchema,
-};
 use diesel::turso::Turso;
 use diesel::turso::TursoConnection;
+use diesel::turso::union::{
+    DecodeError, TaggedUnion, UnionSchema, decode_from_blob, decode_record, encode_for_bind,
+    encode_record,
+};
 
 // Hand-written UnionSchema impl below — M8 generates the equivalent block
 // from `#[derive(UnionSchema)]`. Kept here as a regression target for the

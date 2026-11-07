@@ -5,8 +5,8 @@
 //! * [deadpool](self::deadpool)
 //! * [bb8](self::bb8)
 //! * [mobc](self::mobc)
-use crate::connection::{AsyncConnection, AsyncTransactionManager};
 use crate::QueryResult;
+use crate::connection::{AsyncConnection, AsyncTransactionManager};
 use futures_core::future::BoxFuture;
 use futures_util::FutureExt;
 use std::borrow::Cow;
@@ -190,8 +190,8 @@ pub trait PoolableConnection: AsyncConnection {
         crate::query_builder::SqlQuery:
             crate::query_dsl::async_run_query_dsl::methods::ExecuteDsl<Self>,
     {
-        use crate::async_dsl::RunQueryDsl;
         use crate::IntoSql;
+        use crate::async_dsl::RunQueryDsl;
 
         async move {
             match config {

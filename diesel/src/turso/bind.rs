@@ -6,7 +6,7 @@
 //! an owned `TursoBindBuffer` that `ToSql` impls populate via
 //! `Output::set_value(T)` where `T: Into<TursoBindBuffer>`.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::backend::Backend;
 use crate::query_builder::BindCollector;
