@@ -1,5 +1,8 @@
 //! What does Turso physically store for each built-in type? Probe roundtrips.
 
+// A probe: printing what the engine answered is its output.
+#![allow(clippy::print_stdout)]
+
 use anyhow::Result;
 use turso::Builder;
 

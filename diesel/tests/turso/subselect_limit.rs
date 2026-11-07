@@ -66,6 +66,7 @@ async fn seed() -> Result<TursoConnection> {
 
 /// The subquery `.single_value()` builds: two binds of its own, so the
 /// statement around it has placeholders on both sides of the `LIMIT`.
+#[allow(clippy::type_complexity)] // spelled out, because the type is the point
 fn thread_id() -> diesel::dsl::AssumeNotNull<
     diesel::dsl::SingleValue<
         diesel::dsl::Select<

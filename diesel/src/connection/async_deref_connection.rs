@@ -1,3 +1,4 @@
+use crate::QueryResult;
 use crate::associations::HasTable;
 use crate::async_dsl::UpdateAndFetchResults;
 use crate::connection::CacheSize;
@@ -5,9 +6,8 @@ use crate::connection::Instrumentation;
 use crate::connection::{
     AsyncConnection, AsyncConnectionCore, AsyncTransactionManager, SimpleAsyncConnection,
 };
-use crate::QueryResult;
+use core::ops::DerefMut;
 use futures_util::future::BoxFuture;
-use std::ops::DerefMut;
 
 impl<C> SimpleAsyncConnection for C
 where
@@ -99,7 +99,7 @@ where
 
 #[doc(hidden)]
 #[allow(missing_debug_implementations)]
-pub struct PoolTransactionManager<TM>(std::marker::PhantomData<TM>);
+pub struct PoolTransactionManager<TM>(core::marker::PhantomData<TM>);
 
 impl<C, TM> AsyncTransactionManager<C> for PoolTransactionManager<TM>
 where

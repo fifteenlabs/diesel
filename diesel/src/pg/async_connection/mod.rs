@@ -7,11 +7,11 @@
 use self::error_helper::ErrorHelper;
 use self::row::PgRow;
 use self::serialize::ToSqlHelper;
+use crate::connection::StrQueryHelper;
 use crate::connection::async_stmt_cache::{CallbackHelper, QueryFragmentHelper};
 use crate::connection::statement_cache::{
     PrepareForCache, QueryFragmentForCachedStatement, StatementCache,
 };
-use crate::connection::StrQueryHelper;
 use crate::connection::{
     AnsiAsyncTransactionManager, AsyncConnection, AsyncConnectionCore, SimpleAsyncConnection,
 };
@@ -26,17 +26,17 @@ use crate::result::{DatabaseErrorKind, Error};
 use crate::{ConnectionError, ConnectionResult, QueryResult};
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
+use futures_util::TryFutureExt;
 use futures_util::future::Either;
 use futures_util::stream::TryStreamExt;
-use futures_util::TryFutureExt;
 use futures_util::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
+use tokio_postgres::Statement;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::types::Type;
-use tokio_postgres::Statement;
 
 pub use self::transaction_builder::TransactionBuilder;
 
@@ -395,7 +395,7 @@ fn prepare_statement_helper<'conn>(
     _is_for_cache: PrepareForCache,
     metadata: &[PgTypeMetadata],
 ) -> CallbackHelper<
-    impl Future<Output = QueryResult<(Statement, &'conn tokio_postgres::Client)>> + Send,
+    impl Future<Output = QueryResult<(Statement, &'conn tokio_postgres::Client)>> + Send + use<'conn>,
 > {
     let bind_types = metadata
         .iter()
@@ -673,6 +673,7 @@ impl AsyncPgConnection {
                 let helper = QueryFragmentHelper {
                     sql: sql.clone(),
                     safe_to_cache: is_safe_to_cache_prepared,
+                    parameter_count: bind_collector.metadata.len(),
                 };
                 let instrumentation = Arc::clone(&instrumentation);
                 stmt_cache
@@ -1079,14 +1080,24 @@ impl QueryFragmentForCachedStatement<Pg> for QueryFragmentHelper {
     fn is_safe_to_cache_prepared(&self, _backend: &Pg) -> QueryResult<bool> {
         Ok(self.safe_to_cache)
     }
+
+    fn parameter_count(&self, _backend: &Pg) -> QueryResult<usize> {
+        Ok(self.parameter_count)
+    }
+}
+
+impl crate::connection::statement_cache::PreparedStatement for tokio_postgres::Statement {
+    fn parameter_count(&self) -> u64 {
+        self.params().len() as u64
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::IntoSql;
     use crate::async_dsl::RunQueryDsl;
     use crate::sql_types::Integer;
-    use crate::IntoSql;
     use futures_util::future::try_join;
     use scoped_futures::ScopedFutureExt;
 

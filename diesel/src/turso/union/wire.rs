@@ -38,7 +38,7 @@ pub enum WireError {
     ReservedSerialType(u64),
     /// A TEXT payload's bytes were not UTF-8.
     #[error("TEXT payload was not valid UTF-8: {0}")]
-    InvalidUtf8(std::string::FromUtf8Error),
+    InvalidUtf8(alloc::string::FromUtf8Error),
     /// A UNION's outer record carried something other than the single
     /// column the framing requires.
     #[error("UNION outer record had {0} columns, expected exactly 1")]
@@ -53,7 +53,7 @@ pub enum WireError {
 pub fn encode_union(tag_index: u8, outer: turso::Value) -> Vec<u8> {
     let mut out = Vec::with_capacity(32);
     out.push(tag_index);
-    encode_record_into(std::slice::from_ref(&outer), &mut out);
+    encode_record_into(core::slice::from_ref(&outer), &mut out);
     out
 }
 
@@ -113,7 +113,8 @@ fn encode_record_into(values: &[turso::Value], out: &mut Vec<u8>) {
 /// are malformed outright.
 pub fn decode_record(buf: &[u8]) -> Result<Vec<turso::Value>, WireError> {
     let (header_size, len_consumed) = read_varint(buf)?;
-    let header_end = header_size as usize;
+    // A header longer than the address space cannot be in `buf` either.
+    let header_end = usize::try_from(header_size).map_err(|_| WireError::UnexpectedEof)?;
     // The header-size varint counts *itself*, so a well-formed record always
     // has `header_size >= len_consumed`. Checking only the upper bound would
     // leave the lower one to `&buf[len_consumed..header_end]`, which panics
@@ -184,13 +185,6 @@ fn encode_value(v: &turso::Value, body: &mut Vec<u8>) -> u64 {
 
 /// Pick the narrowest SQLite serial type that fits `n`.
 fn encode_integer(n: i64, body: &mut Vec<u8>) -> u64 {
-    // Literal-value serials 8 / 9 carry no payload.
-    if n == 0 {
-        return 8;
-    }
-    if n == 1 {
-        return 9;
-    }
     // Signed-range thresholds. 24-bit: [-(1<<23), (1<<23)-1]; 48-bit:
     // [-(1<<47), (1<<47)-1]. Others use native width helpers.
     const I24_MIN: i64 = -(1 << 23);
@@ -198,18 +192,26 @@ fn encode_integer(n: i64, body: &mut Vec<u8>) -> u64 {
     const I48_MIN: i64 = -(1 << 47);
     const I48_MAX: i64 = (1 << 47) - 1;
 
-    if (i8::MIN as i64..=i8::MAX as i64).contains(&n) {
-        body.push(n as u8);
+    // Literal-value serials 8 / 9 carry no payload.
+    if n == 0 {
+        return 8;
+    }
+    if n == 1 {
+        return 9;
+    }
+
+    if let Ok(n) = i8::try_from(n) {
+        body.extend_from_slice(&n.to_be_bytes());
         1
-    } else if (i16::MIN as i64..=i16::MAX as i64).contains(&n) {
-        body.extend_from_slice(&(n as i16).to_be_bytes());
+    } else if let Ok(n) = i16::try_from(n) {
+        body.extend_from_slice(&n.to_be_bytes());
         2
     } else if (I24_MIN..=I24_MAX).contains(&n) {
         // Low 3 bytes of the big-endian i64 representation.
         body.extend_from_slice(&n.to_be_bytes()[5..]);
         3
-    } else if (i32::MIN as i64..=i32::MAX as i64).contains(&n) {
-        body.extend_from_slice(&(n as i32).to_be_bytes());
+    } else if let Ok(n) = i32::try_from(n) {
+        body.extend_from_slice(&n.to_be_bytes());
         4
     } else if (I48_MIN..=I48_MAX).contains(&n) {
         // Low 6 bytes of the big-endian i64 representation.
@@ -303,7 +305,7 @@ fn varint_len(v: u64) -> u64 {
 
 fn write_varint(out: &mut Vec<u8>, v: u64) {
     if v <= 0x7f {
-        out.push(v as u8);
+        out.push((v & 0x7f) as u8);
         return;
     }
     if v <= 0x00ff_ffff_ffff_ffff_u64 {
@@ -323,7 +325,7 @@ fn write_varint(out: &mut Vec<u8>, v: u64) {
         // 9-byte form: first 8 bytes carry 7 bits each (all with
         // continuation bit set), 9th byte carries all 8 bits = 64 total.
         let mut buf = [0u8; 9];
-        buf[8] = v as u8;
+        buf[8] = (v & 0xff) as u8;
         let mut rest = v >> 8;
         for b in buf[..8].iter_mut().rev() {
             *b = 0x80 | ((rest & 0x7f) as u8);

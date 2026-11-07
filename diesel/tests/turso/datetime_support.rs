@@ -1,5 +1,8 @@
 //! Probe: what datetime support does Turso ship today?
 
+// A probe: printing what the engine answered is its output.
+#![allow(clippy::print_stdout)]
+
 use anyhow::Result;
 use turso::{Builder, Value};
 

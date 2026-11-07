@@ -208,6 +208,8 @@ mod multi_connection_impl {
             type BatchUpdateSupport = MultiBatchUpdateSupport;
             type DefaultValueClauseForInsert = MultiDefaultValueClauseForInsert;
             type EmptyFromClauseSyntax = MultiEmptyFromClauseSyntax;
+            type JoinFromClauseSyntax = diesel::internal::derives::multiconnection::sql_dialect::join_from_clause_syntax::AnsiSqlJoinFromClauseSyntax;
+            type SubselectLimitSyntax = diesel::internal::derives::multiconnection::sql_dialect::subselect_limit_syntax::BindSubselectLimit;
             type ExistsSyntax = MultiExistsSyntax;
             type ArrayComparison = MultiArrayComparisonSyntax;
             type ConcatClause = MultiConcatClauseSyntax;

@@ -29,11 +29,11 @@
 //!   dropped. Renaming means both can sit in [`crate::prelude`] and the
 //!   compiler picks the one whose name you wrote.
 
-use std::fmt::Debug;
-use std::future::Future;
+use core::fmt::Debug;
+use core::future::Future;
 
-use futures_core::future::BoxFuture;
 use futures_core::Stream;
+use futures_core::future::BoxFuture;
 use futures_util::FutureExt;
 use scoped_futures::{ScopedBoxFuture, ScopedFutureExt};
 
@@ -280,7 +280,7 @@ pub trait AsyncConnection: AsyncConnectionCore + Sized {
                 .map_err(|_| crate::result::Error::RollbackTransaction)
                 .and_then(move |r| {
                     let _ = user_result_tx.send(r);
-                    std::future::ready(Err(crate::result::Error::RollbackTransaction))
+                    core::future::ready(Err(crate::result::Error::RollbackTransaction))
                 })
                 .scope_boxed()
         })
@@ -288,7 +288,7 @@ pub trait AsyncConnection: AsyncConnectionCore + Sized {
             let r = user_result_rx
                 .try_recv()
                 .expect("Transaction did not succeed");
-            std::future::ready(r)
+            core::future::ready(r)
         })
     }
 

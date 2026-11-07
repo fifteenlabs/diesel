@@ -40,15 +40,15 @@
 //! whatever the DSL rendered a line earlier.
 
 use anyhow::Result;
+use diesel::UnionSchema as DeriveUnionSchema;
 use diesel::async_dsl::RunQueryDsl;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::prelude::*;
+use diesel::turso::Turso;
+use diesel::turso::TursoConnection;
 use diesel::turso::union::{
     CompositeExpressionMethods, TaggedUnion, UnionExpressionMethods, UnionSchema,
 };
-use diesel::turso::Turso;
-use diesel::turso::TursoConnection;
-use diesel::UnionSchema as DeriveUnionSchema;
 
 use crate::sql_text::rendered;
 

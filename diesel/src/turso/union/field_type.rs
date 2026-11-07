@@ -36,7 +36,7 @@
 //! `HasSqlType<_> for Turso` metadata, so a field's storage class in
 //! `CREATE TYPE` and its storage class as a bind value cannot disagree.
 
-use std::error::Error;
+use core::error::Error;
 
 use crate::deserialize::FromSql;
 use crate::serialize::{IsNull, Output, ToSql};

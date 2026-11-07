@@ -8,13 +8,13 @@
 //! enum is asked to open it.
 
 use anyhow::Result;
+use diesel::UnionSchema as DeriveUnionSchema;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
+use diesel::turso::TursoConnection;
 use diesel::turso::probe::verify_declared_types;
 use diesel::turso::union::{TaggedUnion, UnionSchema};
-use diesel::turso::TursoConnection;
-use diesel::UnionSchema as DeriveUnionSchema;
 
 #[derive(
     Debug,
@@ -146,6 +146,7 @@ async fn a_waiver_covers_only_the_type_it_names() -> Result<()> {
 /// DB's — every superseded union version is still in there, plus Turso's
 /// fifteen built-in domains.
 #[tokio::test(flavor = "current_thread")]
+#[allow(clippy::print_stdout)] // the measurement, for `--nocapture`
 async fn cost_at_meta_db_scale() -> Result<()> {
     let mut ddl = Person::create_type_sql();
     for i in 0..60 {

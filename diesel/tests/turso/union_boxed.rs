@@ -36,11 +36,11 @@ use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
 use diesel::prelude::*;
+use diesel::turso::TursoConnection;
 use diesel::turso::union::{
     CompositeExpressionMethods, TaggedUnion, UnionExpressionMethods, UnionSchema,
     UnionStructPayload,
 };
-use diesel::turso::TursoConnection;
 use diesel::{UnionSchema as DeriveUnionSchema, UnionStructPayload as DeriveUnionStructPayload};
 
 // ── the schema under test ────────────────────────────────────────────────
@@ -1316,7 +1316,13 @@ async fn an_unknown_tag_index_is_an_error_not_a_guess() -> Result<()> {
         matches!(err, diesel::result::Error::DeserializationError(_)),
         "{err:?}"
     );
-    let msg = err.to_string();
+    // Diesel's `DeserializeFieldError` names the field in its `Display` and
+    // keeps the decoder's own message as its `source`, so the whole chain is
+    // what says which index and which variants.
+    let msg = std::iter::successors(Some(&err as &dyn std::error::Error), |e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ");
     assert!(
         msg.contains("unknown union variant") && msg.contains("alpha"),
         "the error should name the index and the variants that do exist: {msg}"

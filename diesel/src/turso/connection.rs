@@ -12,13 +12,14 @@
 // them verbatim.
 #![allow(clippy::manual_async_fn)]
 
-use std::collections::VecDeque;
-use std::future::Future;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use alloc::collections::VecDeque;
+use core::future::Future;
+use core::hash::{Hash, Hasher};
+use std::hash::DefaultHasher;
 
+use alloc::sync::Arc;
+use core::pin::Pin;
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
-use std::pin::Pin;
-use std::sync::Arc;
 
 use crate::connection::AnsiAsyncTransactionManager;
 use crate::connection::{AsyncConnection, AsyncConnectionCore, SimpleAsyncConnection};
@@ -417,7 +418,7 @@ pub struct Cancellable<'a> {
     conn: &'a mut TursoConnection,
 }
 
-impl std::ops::Deref for Cancellable<'_> {
+impl core::ops::Deref for Cancellable<'_> {
     type Target = TursoConnection;
 
     fn deref(&self) -> &TursoConnection {
@@ -425,7 +426,7 @@ impl std::ops::Deref for Cancellable<'_> {
     }
 }
 
-impl std::ops::DerefMut for Cancellable<'_> {
+impl core::ops::DerefMut for Cancellable<'_> {
     fn deref_mut(&mut self) -> &mut TursoConnection {
         self.conn
     }
@@ -833,7 +834,7 @@ impl AsyncConnectionCore for TursoConnection {
             // reached `Done`.
             let mut rows = statement.query(binds).await.map_err(turso_to_diesel)?;
             while rows.next().await.map_err(turso_to_diesel)?.is_some() {}
-            Ok(statement.n_change() as usize)
+            usize::try_from(statement.n_change()).map_err(crate::result::Error::IntegerConversion)
         })
     }
 }
@@ -895,7 +896,7 @@ impl AsyncConnection for TursoConnection {
     fn transaction_state(
         &mut self,
     ) -> &mut <Self::TransactionManager as crate::connection::AsyncTransactionManager<Self>>::TransactionStateData
-    {
+{
         &mut self.transaction_state
     }
 
@@ -1063,7 +1064,7 @@ mod tests {
         let mut cache = StatementCache::default();
         assert!(
             !cache.admit(UPDATE, VETOED),
-            "the first sighting proves nothing — it could be a format! text"
+            "the first sighting proves nothing: it could be a format! text"
         );
         assert!(
             cache.admit(UPDATE, VETOED),
@@ -1297,7 +1298,7 @@ mod tests {
         assert_eq!(cache.stats().admitted, 0);
         assert!(
             cache.families.is_empty(),
-            "disabled tracks nothing either — not even probation"
+            "disabled tracks nothing either, not even probation"
         );
         assert_eq!(cache.stats().uncached, 2);
     }

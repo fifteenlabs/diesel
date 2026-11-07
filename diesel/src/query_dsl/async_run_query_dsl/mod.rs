@@ -5,11 +5,12 @@
 
 mod utils;
 
+use crate::AsChangeset;
 use crate::associations::HasTable;
 use crate::connection::AsyncConnectionCore;
 use crate::query_builder::IntoUpdateTarget;
 use crate::result::QueryResult;
-use crate::AsChangeset;
+use core::future::Future;
 use futures_core::future::BoxFuture;
 #[cfg(any(
     feature = "async-mysql",
@@ -17,8 +18,7 @@ use futures_core::future::BoxFuture;
     feature = "async-sqlite"
 ))]
 use futures_util::FutureExt;
-use futures_util::{stream, StreamExt, TryStreamExt};
-use std::future::Future;
+use futures_util::{StreamExt, TryStreamExt, stream};
 
 /// The traits used by `QueryDsl`.
 ///
@@ -141,8 +141,8 @@ pub mod return_futures {
     use crate::query_dsl::async_run_query_dsl::utils;
 
     use super::methods::LoadQuery;
+    use core::pin::Pin;
     use futures_util::stream;
-    use std::pin::Pin;
 
     /// The future returned by [`RunQueryDsl::load`](super::RunQueryDsl::load)
     /// and [`RunQueryDsl::get_results`](super::RunQueryDsl::get_results)

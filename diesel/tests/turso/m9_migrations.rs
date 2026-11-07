@@ -16,16 +16,16 @@
 //! on.
 
 use anyhow::Result;
+use diesel::UnionSchema as DeriveUnionSchema;
 use diesel::async_connection_wrapper::AsyncConnectionWrapper;
 use diesel::async_dsl::RunQueryDsl;
 use diesel::connection::AsyncConnection;
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
 use diesel::prelude::*;
-use diesel::turso::union::TaggedUnion;
 use diesel::turso::TursoConnection;
-use diesel::UnionSchema as DeriveUnionSchema;
-use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+use diesel::turso::union::TaggedUnion;
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("tests/turso/m9_migrations");
 

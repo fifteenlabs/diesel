@@ -8,7 +8,7 @@
 //! and everything else here matches what the macro would have written.
 
 use super::{AstPass, QueryFragment};
-use crate::backend::{sql_dialect, Backend, DieselReserveSpecialization, SqlDialect};
+use crate::backend::{Backend, DieselReserveSpecialization, SqlDialect, sql_dialect};
 use crate::query_builder::QueryId;
 use crate::result::QueryResult;
 
