@@ -59,11 +59,16 @@ async fn a_database_the_derive_wrote_passes() -> Result<()> {
 /// Superseded versions of a type stay in the file forever — Turso refuses
 /// `DROP TYPE` while any column names it — so extra declarations must not
 /// be treated as drift.
+///
+/// The struct is declared before the union that names it: Turso refuses a
+/// `CREATE TYPE` for a struct that an existing union already refers to
+/// ("create person_user_v0 before person_v0"), so this is the only order a
+/// real file can hold them in.
 #[tokio::test(flavor = "current_thread")]
 async fn unrelated_and_superseded_declarations_are_ignored() -> Result<()> {
     let ddl = format!(
-        "CREATE TYPE person_v0 AS UNION(user person_user_v0); \
-         CREATE TYPE person_user_v0 AS STRUCT(name TEXT); {}",
+        "CREATE TYPE person_user_v0 AS STRUCT(name TEXT); \
+         CREATE TYPE person_v0 AS UNION(user person_user_v0); {}",
         Person::create_type_sql()
     );
     let conn = open_with(&ddl).await?;
