@@ -118,6 +118,7 @@ mod implementation {
         )
     }
 
+    #[allow(missing_debug_implementations)]
     pub struct SyncConnectionWrapper<C, S> {
         inner: Arc<Mutex<C>>,
         runtime: S,
@@ -144,7 +145,7 @@ mod implementation {
         C: Connection + LoadConnection + WithMetadataLookup + 'static,
         <C as Connection>::TransactionManager: Send,
         // BindCollector bounds
-        MD: Send + 'static,
+        MD: crate::query_builder::BindData,
         for<'a> <C::Backend as Backend>::BindCollector<'a>:
             MoveableBindCollector<C::Backend, BindData = MD> + std::default::Default,
         // Row bounds
@@ -169,6 +170,7 @@ mod implementation {
             self.execute_with_prepared_query(source.as_query(), |conn, query| {
                 use crate::row::IntoOwnedRow;
                 let mut cache = <<<C as LoadConnection>::Row<'_, '_> as IntoOwnedRow<
+                    '_,
                     <C as Connection>::Backend,
                 >>::Cache as Default>::default();
                 let cursor = conn.load(&query)?;
@@ -209,7 +211,7 @@ mod implementation {
         C: Connection + LoadConnection + WithMetadataLookup + 'static,
         <C as Connection>::TransactionManager: Send,
         // BindCollector bounds
-        MD: Send + 'static,
+        MD: crate::query_builder::BindData,
         for<'a> <C::Backend as Backend>::BindCollector<'a>:
             MoveableBindCollector<C::Backend, BindData = MD> + std::default::Default,
         // Row bounds
@@ -284,6 +286,7 @@ mod implementation {
     }
 
     /// A wrapper of a diesel transaction manager usable in async context.
+    #[allow(missing_debug_implementations)]
     pub struct SyncTransactionManagerWrapper<T>(PhantomData<T>);
 
     impl<T, C, S> AsyncTransactionManager<SyncConnectionWrapper<C, S>>
@@ -406,7 +409,7 @@ mod implementation {
             C: Connection + LoadConnection + WithMetadataLookup + 'static,
             <C as Connection>::TransactionManager: Send,
             // BindCollector bounds
-            MD: Send + 'static,
+            MD: crate::query_builder::BindData,
             for<'b> <C::Backend as Backend>::BindCollector<'b>:
                 MoveableBindCollector<C::Backend, BindData = MD> + std::default::Default,
             // Arguments/Return bounds
@@ -478,6 +481,7 @@ mod implementation {
     }
 
     #[cfg(feature = "tokio")]
+    #[allow(missing_debug_implementations)]
     pub enum Tokio {
         Handle(tokio::runtime::Handle),
         Runtime(tokio::runtime::Runtime),

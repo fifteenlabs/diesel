@@ -56,6 +56,9 @@ where
     Self: Backend<QueryBuilder = MysqlLikeQueryBuilder<Self>>,
     Self: Hash + Eq + Default,
     Self: DieselReserveSpecialization,
+    Self: crate::backend::SqlDialect<
+            SubselectLimitSyntax = crate::backend::sql_dialect::subselect_limit_syntax::BindSubselectLimit,
+        >,
     Self: MapErrorNumber,
     Self: 'static,
 {

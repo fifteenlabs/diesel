@@ -18,7 +18,7 @@ use thiserror::Error;
 
 /// What an encode hands back on failure — diesel's own boxed serialize
 /// error, since every encode in this module is ultimately a `ToSql` call.
-pub type EncodeResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub type EncodeResult<T> = Result<T, Box<dyn core::error::Error + Send + Sync>>;
 
 /// Storage-class tag for `TypeMismatch` errors. Kept separate from
 /// `turso::Value` so errors don't carry arbitrary payloads (which would
@@ -50,8 +50,8 @@ impl ValueKind {
     }
 }
 
-impl std::fmt::Display for ValueKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ValueKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::Null => "NULL",
             Self::Integer => "INTEGER",
@@ -132,7 +132,7 @@ pub enum DecodeError {
 
     /// A TEXT payload was not valid UTF-8.
     #[error("TEXT was not valid UTF-8: {0}")]
-    Utf8(#[from] std::string::FromUtf8Error),
+    Utf8(#[from] alloc::string::FromUtf8Error),
 
     /// Escape hatch for hand-written impls whose failure modes don't
     /// fit the typed variants above. Prefer a typed variant when one

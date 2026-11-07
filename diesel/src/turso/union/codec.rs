@@ -16,7 +16,7 @@
 //! see `tests/m7_union_codec.rs`) whose body is a one-liner forwarding to
 //! [`encode_for_bind`] / [`decode_from_blob`].
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::deserialize;
 use crate::serialize::{self, IsNull, Output};

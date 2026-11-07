@@ -37,15 +37,15 @@ use crate::result::*;
 use crate::sql_types::TypeMetadata;
 use core::fmt::Debug;
 
+#[cfg(feature = "async")]
+pub use self::async_connection::{AsyncConnection, AsyncConnectionCore, SimpleAsyncConnection};
+#[cfg(feature = "async")]
+pub use self::async_transaction_manager::{AnsiAsyncTransactionManager, AsyncTransactionManager};
 #[doc(inline)]
 pub use self::database_version::{DatabaseVersion, ParseDatabaseVersionError};
 #[cfg(feature = "std")]
 #[doc(inline)]
 pub use self::instrumentation::set_default_instrumentation;
-#[cfg(feature = "async")]
-pub use self::async_connection::{AsyncConnection, AsyncConnectionCore, SimpleAsyncConnection};
-#[cfg(feature = "async")]
-pub use self::async_transaction_manager::{AnsiAsyncTransactionManager, AsyncTransactionManager};
 #[doc(inline)]
 pub use self::instrumentation::{
     DebugQuery, Instrumentation, InstrumentationEvent, get_default_instrumentation,

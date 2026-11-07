@@ -147,8 +147,8 @@ pub fn exists_over<T>(
 >
 where
     T: crate::query_dsl::methods::SelectDsl<
-        crate::helper_types::AsExprOf<i32, crate::sql_types::Integer>,
-    >,
+            crate::helper_types::AsExprOf<i32, crate::sql_types::Integer>,
+        >,
 {
     use crate::expression::IntoSql;
     crate::dsl::exists(query.select(1.into_sql::<crate::sql_types::Integer>()))

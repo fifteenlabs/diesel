@@ -105,7 +105,7 @@
 
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{Attribute, Data, DataStruct, DeriveInput, Fields, Ident, LitStr, Type, Variant};
 
 /// A UNION variant tag or STRUCT field name as **Turso stores it**, which is

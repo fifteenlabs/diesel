@@ -1,6 +1,9 @@
 //! Probe: what column type declarations does Turso accept in STRICT tables?
 //! Used to justify the `HasSqlType` mapping in backend.rs.
 
+// A probe: printing what the engine answered is its output.
+#![allow(clippy::print_stdout)]
+
 use anyhow::Result;
 use turso::Builder;
 

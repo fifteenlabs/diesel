@@ -1,7 +1,7 @@
-use crate::mysql::data_types::MysqlTime;
+use crate::QueryResult;
 use crate::mysql::MysqlType;
 use crate::mysql::MysqlValue;
-use crate::QueryResult;
+use crate::mysql::data_types::MysqlTime;
 use mysql_async::{Params, Value};
 use std::convert::TryInto;
 

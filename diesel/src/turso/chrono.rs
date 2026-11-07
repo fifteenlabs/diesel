@@ -97,9 +97,13 @@ pub(crate) fn decode_naive_datetime(v: &turso::Value) -> Option<NaiveDateTime> {
 /// Julian-day-number → `NaiveDateTime`. JD 2440587.5 is the Unix epoch.
 fn naive_from_julian_day(jd: f64) -> Option<NaiveDateTime> {
     let unix_seconds = (jd - 2_440_587.5) * 86_400.0;
+    // `as` saturates out-of-range floats, and anything that far out is
+    // refused by `from_timestamp` below anyway.
+    #[allow(clippy::cast_possible_truncation)]
     let secs = unix_seconds.trunc() as i64;
     // Carry a sub-ns rounding overflow into the seconds, so values near
     // i64 boundaries don't produce a `nanos == 1e9` that chrono rejects.
+    #[allow(clippy::cast_possible_truncation)] // |fract| < 1, so |nanos| <= 1e9
     let mut nanos = (unix_seconds.fract() * 1_000_000_000.0).round() as i64;
     let secs = if nanos >= 1_000_000_000 {
         nanos -= 1_000_000_000;
@@ -107,7 +111,7 @@ fn naive_from_julian_day(jd: f64) -> Option<NaiveDateTime> {
     } else {
         secs
     };
-    DateTime::<Utc>::from_timestamp(secs, nanos as u32).map(|dt| dt.naive_utc())
+    DateTime::<Utc>::from_timestamp(secs, u32::try_from(nanos).ok()?).map(|dt| dt.naive_utc())
 }
 
 // -- NaiveDate ↔ Date --------------------------------------------------------

@@ -1,5 +1,5 @@
-use crate::connection::statement_cache::{MaybeCached, StatementCallbackReturnType};
 use crate::QueryResult;
+use crate::connection::statement_cache::{MaybeCached, StatementCallbackReturnType};
 use futures_core::future::BoxFuture;
 use futures_util::future::Either;
 use futures_util::{FutureExt, TryFutureExt};
@@ -56,4 +56,5 @@ where
 pub(crate) struct QueryFragmentHelper {
     pub(crate) sql: String,
     pub(crate) safe_to_cache: bool,
+    pub(crate) parameter_count: usize,
 }

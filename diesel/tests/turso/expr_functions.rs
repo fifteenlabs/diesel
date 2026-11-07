@@ -23,8 +23,8 @@ use anyhow::Result;
 use diesel::async_dsl::RunQueryDsl;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::prelude::*;
-use diesel::turso::expr::{bit_and, coalesce, coalesce_opt, exists_over, max2, min2};
 use diesel::turso::TursoConnection;
+use diesel::turso::expr::{bit_and, coalesce, coalesce_opt, exists_over, max2, min2};
 
 diesel::table! {
     readings (id) {

@@ -24,8 +24,8 @@
 //! into the wrong fields. That is the failure this module exists to make
 //! loud, and it is why [`TypeDecl::members`] is a `Vec` and not a map.
 
-use std::collections::BTreeMap;
-use std::fmt;
+use alloc::collections::BTreeMap;
+use alloc::fmt;
 
 /// Which flavour of composite a `CREATE TYPE` declared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +181,7 @@ impl fmt::Display for DeclarationDrift {
     }
 }
 
-impl std::error::Error for DeclarationDrift {}
+impl core::error::Error for DeclarationDrift {}
 
 /// Check every `CREATE TYPE` a derive emits against declarations from
 /// somewhere else.

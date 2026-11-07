@@ -1,8 +1,8 @@
+use crate::QueryResult;
 use crate::backend::Backend;
 use crate::connection::{AnsiAsyncTransactionManager, AsyncConnection, AsyncTransactionManager};
 use crate::pg::Pg;
 use crate::query_builder::{AstPass, QueryBuilder, QueryFragment};
-use crate::QueryResult;
 use scoped_futures::ScopedBoxFuture;
 
 /// Used to build a transaction, specifying additional details.
@@ -396,9 +396,9 @@ mod tests {
             };
         }
 
-        let database_url =
-            dbg!(std::env::var("DATABASE_URL")
-                .expect("DATABASE_URL must be set in order to run tests"));
+        let database_url = dbg!(
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in order to run tests")
+        );
         let mut conn = crate::pg::AsyncPgConnection::establish(&database_url)
             .await
             .unwrap();

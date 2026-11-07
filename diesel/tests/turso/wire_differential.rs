@@ -41,12 +41,12 @@
 //!    silent failure is the reason for the test.
 
 use anyhow::Result;
+use diesel::UnionSchema as DeriveUnionSchema;
 use diesel::connection::{AsyncConnection, SimpleAsyncConnection};
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::AsExpression;
-use diesel::turso::union::{decode_record, encode_record, TaggedUnion, UnionSchema};
 use diesel::turso::TursoConnection;
-use diesel::UnionSchema as DeriveUnionSchema;
+use diesel::turso::union::{TaggedUnion, UnionSchema, decode_record, encode_record};
 
 /// A struct variant with one slot per storage class, so a case can put a
 /// value under test in its own slot and hold the others fixed, and a union

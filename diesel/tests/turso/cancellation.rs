@@ -8,8 +8,8 @@ use diesel::connection::AsyncConnection;
 use diesel::prelude::*;
 use diesel::result::{DatabaseErrorKind, Error};
 use diesel::turso::TursoConnection;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(QueryableByName)]

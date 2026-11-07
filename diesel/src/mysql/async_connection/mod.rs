@@ -4,11 +4,12 @@
 //! submodule of `mysql` so that everything speaking this backend is reachable
 //! from one path.
 
+use crate::QueryResult;
+use crate::connection::StrQueryHelper;
 use crate::connection::async_stmt_cache::{CallbackHelper, QueryFragmentHelper};
 use crate::connection::statement_cache::{
     MaybeCached, QueryFragmentForCachedStatement, StatementCache,
 };
-use crate::connection::StrQueryHelper;
 use crate::connection::{
     AnsiAsyncTransactionManager, AsyncConnection, AsyncConnectionCore, SimpleAsyncConnection,
 };
@@ -16,12 +17,11 @@ use crate::connection::{CacheSize, Instrumentation};
 use crate::connection::{DynInstrumentation, InstrumentationEvent};
 use crate::mysql::{Mysql, MysqlQueryBuilder, MysqlType};
 use crate::query_builder::QueryBuilder;
-use crate::query_builder::{bind_collector::RawBytesBindCollector, QueryFragment, QueryId};
+use crate::query_builder::{QueryFragment, QueryId, bind_collector::RawBytesBindCollector};
 use crate::result::{ConnectionError, ConnectionResult};
-use crate::QueryResult;
+use futures_core::Stream;
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
-use futures_core::Stream;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use mysql_async::prelude::Queryable;
 use mysql_async::{Opts, OptsBuilder, Statement};
@@ -175,8 +175,9 @@ fn prepare_statement_helper<'a>(
     sql: &str,
     _is_for_cache: crate::connection::statement_cache::PrepareForCache,
     _metadata: &[MysqlType],
-) -> CallbackHelper<impl Future<Output = QueryResult<(Statement, &'a mut mysql_async::Conn)>> + Send>
-{
+) -> CallbackHelper<
+    impl Future<Output = QueryResult<(Statement, &'a mut mysql_async::Conn)>> + Send + use<'a>,
+> {
     // ideally we wouldn't clone the SQL string here
     // but as we usually cache statements anyway
     // this is a fixed one time const
@@ -226,9 +227,13 @@ impl AsyncMysqlConnection {
     fn with_prepared_statement<'conn, T, F, R>(
         &'conn mut self,
         query: T,
-        callback: impl (FnOnce(&'conn mut mysql_async::Conn, MaybeCached<'conn, Statement>, ToSqlHelper) -> F)
-            + Send
-            + 'conn,
+        callback: impl (FnOnce(
+            &'conn mut mysql_async::Conn,
+            MaybeCached<'conn, Statement>,
+            ToSqlHelper,
+        ) -> F)
+        + Send
+        + 'conn,
     ) -> BoxFuture<'conn, QueryResult<R>>
     where
         R: Send + 'conn,
@@ -245,11 +250,11 @@ impl AsyncMysqlConnection {
             .map(|()| bind_collector);
 
         let AsyncMysqlConnection {
-            ref mut conn,
-            ref mut stmt_cache,
-            ref mut transaction_manager,
-            ref mut instrumentation,
-            ref mut stmt_to_free,
+            conn,
+            stmt_cache,
+            transaction_manager,
+            instrumentation,
+            stmt_to_free,
             ..
         } = self;
 
@@ -280,6 +285,7 @@ impl AsyncMysqlConnection {
             let helper = QueryFragmentHelper {
                 sql,
                 safe_to_cache: is_safe_to_cache_prepared,
+                parameter_count: metadata.len(),
             };
             let inner = async {
                 let (stmt, conn) = stmt_cache
@@ -460,5 +466,15 @@ impl QueryFragmentForCachedStatement<Mysql> for QueryFragmentHelper {
 
     fn is_safe_to_cache_prepared(&self, _backend: &Mysql) -> QueryResult<bool> {
         Ok(self.safe_to_cache)
+    }
+
+    fn parameter_count(&self, _backend: &Mysql) -> QueryResult<usize> {
+        Ok(self.parameter_count)
+    }
+}
+
+impl crate::connection::statement_cache::PreparedStatement for mysql_async::Statement {
+    fn parameter_count(&self) -> u64 {
+        self.num_params().into()
     }
 }
