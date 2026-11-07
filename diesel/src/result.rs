@@ -163,6 +163,13 @@ pub enum DatabaseErrorKind {
     /// and may be missed.
     ClosedConnection = 7,
 
+    /// The statement was stopped before it finished: interrupted from another
+    /// thread, past its time limit, or cancelled by a condition checked while
+    /// it ran.
+    ///
+    /// Corresponds to `SQLITE_INTERRUPT`. Only emitted by the Turso backend.
+    Interrupted = 11,
+
     #[doc(hidden)]
     Unknown = 8, // Match against _ instead, more variants may be added in the future
 }
