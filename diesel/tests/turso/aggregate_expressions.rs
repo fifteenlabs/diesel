@@ -1,35 +1,18 @@
-//! What diesel's aggregate-function syntax does on Turso, and the one half
-//! of it the engine does not have.
+//! What diesel's aggregate-function syntax does on Turso.
 //!
 //! `SqlDialect::AggregateFunctionExpressions` is a single marker that gates
 //! two unrelated SQL features: `FILTER (WHERE …)` after an aggregate, and
-//! `ORDER BY` *inside* an aggregate's argument list. Turso has the first and
-//! not the second, so the obvious choice — `PostgresLikeAggregate…`, the
-//! marker every SQLite-shaped backend takes — was a claim the engine does not
-//! honour: `max(a ORDER BY a)` compiled and came back at run time with
+//! `ORDER BY` *inside* an aggregate's argument list. Turso used to have only
+//! the first — `max(a ORDER BY a)` came back with "Parse error: ORDER BY
+//! clause is not supported yet in aggregate functions" — so this backend
+//! selected a FILTER-only marker that made `aggregate_order` a compile error.
+//! The engine has since grown the clause, and the backend takes
+//! `PostgresLikeAggregateFunctionExpressions` like every other SQLite-shaped
+//! backend.
 //!
-//! ```text
-//! Parse error: ORDER BY clause is not supported yet in aggregate functions
-//! ```
-//!
-//! This backend therefore selects `FilterOnlyAggregateFunctionExpressions`,
-//! which keeps `aggregate_filter` and leaves `aggregate_order` with no
-//! `QueryFragment` impl at all — so
-//!
-//! ```ignore
-//! samples::table.select(max(samples::score).aggregate_order(samples::score.asc()))
-//! ```
-//!
-//! no longer builds — it is refused with diesel's own dialect diagnostic,
-//! "`Order<…, false>` is no valid SQL fragment for the `Turso` backend …
-//! this usually means that the `Turso` database system does not support this
-//! SQL syntax", which is what a dialect marker is for.
-//!
-//! That is not something a runtime test can assert, so the
-//! tests here pin the two facts the choice rests on instead: `FILTER` works,
-//! and the engine still rejects the `ORDER BY` form. If a future Turso learns
-//! it, [`the_engine_still_rejects_order_by_inside_an_aggregate`] fails and
-//! says to move the marker back.
+//! The tests pin all three facts that choice rests on: `FILTER` works,
+//! `aggregate_order` renders and runs through the typed DSL, and the engine
+//! honours the order rather than parsing it and dropping it.
 
 use anyhow::Result;
 use diesel::async_dsl::RunQueryDsl;
@@ -79,10 +62,10 @@ async fn setup() -> Result<TursoConnection> {
     Ok(conn)
 }
 
-/// The half of the marker Turso does have. This is what the dialect choice is
-/// *for*: dropping to `NoAggregateFunctionExpressions` would have taken
-/// `FILTER` away too, and `count(*) FILTER (WHERE …)` is the reason anyone
-/// reaches for aggregate expressions here.
+/// The `FILTER` half of the marker. Dropping to
+/// `NoAggregateFunctionExpressions` would take it away, and
+/// `count(*) FILTER (WHERE …)` is the reason anyone reaches for aggregate
+/// expressions here.
 #[tokio::test(flavor = "current_thread")]
 async fn a_filter_clause_renders_and_runs() -> Result<()> {
     let mut conn = setup().await?;
@@ -120,8 +103,8 @@ async fn aggregate_distinct_still_works() -> Result<()> {
 
 /// A window function's own `ORDER BY` is a different clause in a different
 /// place — `OVER (ORDER BY …)` — and Turso runs it. Pinned because the two
-/// are easy to conflate: the marker this backend declines is about the order
-/// inside the *argument list*, not this one.
+/// are easy to conflate: the marker's `ORDER BY` is the one inside the
+/// *argument list*, not this one.
 #[tokio::test(flavor = "current_thread")]
 async fn a_window_order_by_is_unaffected() -> Result<()> {
     let mut conn = setup().await?;
@@ -139,46 +122,62 @@ async fn a_window_order_by_is_unaffected() -> Result<()> {
     Ok(())
 }
 
-/// The fact the dialect choice rests on, asserted against the engine rather
-/// than taken from a changelog.
+/// `aggregate_order` through the typed DSL: it renders the `ORDER BY` inside
+/// the argument list and the engine runs it.
 ///
-/// Written as raw SQL because the typed DSL can no longer express it: with
-/// `FilterOnlyAggregateFunctionExpressions` selected, `aggregate_order` on a
-/// Turso query has no `QueryFragment` impl and does not compile. The SQL below
-/// is exactly what it used to render.
-///
-/// If this test starts failing because the statement *succeeded*, Turso has
-/// grown the clause: swap `SqlDialect::AggregateFunctionExpressions` in
-/// `src/turso/backend.rs` back to `PostgresLikeAggregateFunctionExpressions`,
-/// which restores `aggregate_order`, and delete this test.
+/// This replaces the test that pinned Turso *rejecting* the clause. That test
+/// said what to do when the engine grew it — select
+/// `PostgresLikeAggregateFunctionExpressions` again — and this is the other
+/// half of that instruction: the DSL form compiles again, so it is asserted
+/// end to end rather than as raw SQL.
 #[tokio::test(flavor = "current_thread")]
-async fn the_engine_still_rejects_order_by_inside_an_aggregate() -> Result<()> {
+async fn aggregate_order_renders_and_runs() -> Result<()> {
     let mut conn = setup().await?;
 
-    // The `FILTER` control, through the same raw path, so a failure below is
-    // about `ORDER BY` and not about the statement or the connection.
-    diesel::sql_query(r#"SELECT count(*) FILTER (WHERE "kind" = 'a') FROM "samples""#)
-        .execute(&mut conn)
-        .await?;
-
-    let err = diesel::sql_query(r#"SELECT max("score" ORDER BY "score" ASC) FROM "samples""#)
-        .execute(&mut conn)
-        .await
-        .expect_err(
-            "Turso used to reject ORDER BY inside an aggregate; if it no longer does, \
-             see this test's doc comment",
-        );
-    let message = err.to_string();
+    let query = samples::table.select(max(samples::score).aggregate_order(samples::score.asc()));
+    let sql = rendered(&query);
     assert!(
-        message.contains("ORDER BY clause is not supported yet in aggregate functions"),
-        "expected Turso's aggregate-ORDER BY parse error, got: {message}"
+        sql.contains("ORDER BY"),
+        "the ORDER BY has to render inside the aggregate. Rendered:\n  {sql}"
     );
+
+    let highest: Option<i64> = query.get_result(&mut conn).await?;
+    assert_eq!(highest, Some(40));
     Ok(())
 }
 
-/// `max(x)` on its own — the function `aggregate_order` would have been
-/// attached to — is unaffected, so the dialect choice costs the ordering
-/// clause and nothing else.
+/// That the engine *honours* the order, not merely parses it. `max` cannot
+/// tell — its answer is the same in any order — so this asks an
+/// order-sensitive aggregate, through raw SQL because diesel has no typed
+/// `group_concat`. If Turso ever parsed the clause and dropped it, the
+/// marker would be claiming a capability again, just a quieter one.
+#[tokio::test(flavor = "current_thread")]
+async fn the_engine_honours_order_by_inside_an_aggregate() -> Result<()> {
+    #[derive(QueryableByName)]
+    struct Joined {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        joined: String,
+    }
+
+    let mut conn = setup().await?;
+
+    let descending: Joined = diesel::sql_query(
+        r#"SELECT group_concat("id", ',' ORDER BY "score" DESC, "id" DESC) AS joined FROM "samples""#,
+    )
+    .get_result(&mut conn)
+    .await?;
+    let ascending: Joined = diesel::sql_query(
+        r#"SELECT group_concat("id", ',' ORDER BY "score" ASC, "id" ASC) AS joined FROM "samples""#,
+    )
+    .get_result(&mut conn)
+    .await?;
+    assert_eq!(descending.joined, "5,4,3,2,1");
+    assert_eq!(ascending.joined, "1,2,3,4,5");
+    Ok(())
+}
+
+/// `max(x)` on its own — the function `aggregate_order` is attached to above —
+/// renders and runs without any aggregate clause at all.
 #[tokio::test(flavor = "current_thread")]
 async fn the_bare_aggregate_is_untouched() -> Result<()> {
     let mut conn = setup().await?;
