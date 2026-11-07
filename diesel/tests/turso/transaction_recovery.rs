@@ -86,18 +86,27 @@ async fn a_refused_commit_ends_the_transaction_and_the_connection_still_works() 
         .transaction::<(), Error, _>(|c| {
             async move {
                 // Passes the immediate check; fails the deferred one at COMMIT.
-                c.batch_execute("INSERT INTO child(id, p) VALUES (1, 999)")
-                    .await?;
+                let inserted = c
+                    .batch_execute("INSERT INTO child(id, p) VALUES (1, 999)")
+                    .await;
+                assert!(
+                    inserted.is_ok(),
+                    "the constraint is deferred, so the INSERT itself must pass: {inserted:?}"
+                );
                 Ok(())
             }
             .scope_boxed()
         })
         .await;
+    // Turso has spelled this error "deferred foreign key …" and, since,
+    // SQLite's own "FOREIGN KEY constraint failed". The wording is not what
+    // this test is about; that it is the foreign key refusing the COMMIT —
+    // the INSERT above having passed — is.
     let Err(Error::DatabaseError(_, info)) = &failed else {
         anyhow::bail!("expected the deferred FK to refuse the commit, got {failed:?}");
     };
     assert!(
-        info.message().contains("deferred foreign key"),
+        info.message().contains("FOREIGN KEY constraint failed"),
         "unexpected commit error: {}",
         info.message()
     );
