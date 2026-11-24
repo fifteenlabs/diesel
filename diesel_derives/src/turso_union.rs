@@ -205,7 +205,7 @@ fn stored_name(name: &str) -> String {
     let needs_quoting = name.is_empty()
         || name.as_bytes()[0].is_ascii_digit()
         || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        || turso_parser::lexer::is_quotable_keyword(name.as_bytes());
+        || turso_ast::keyword::is_quotable_keyword(name.as_bytes());
     if needs_quoting {
         format!("\"{}\"", name.replace('"', "\"\""))
     } else {
