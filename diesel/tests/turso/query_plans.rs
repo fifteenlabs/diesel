@@ -320,22 +320,21 @@ async fn in_subquery_loses_the_index_ordering() -> Result<()> {
 /// is the kind of thing that could leave the planner unable to see a
 /// restriction through the join.
 ///
-/// It doesn't: both sides are searched through their own index. What the plan
-/// *also* contains is a sorter, and the reason is worth writing down, because
-/// it is not the join's fault:
+/// It doesn't: both sides are searched through their own index, and neither
+/// query needs a sorter:
 ///
 /// ```text
 /// SEARCH threads USING INDEX threads_by_key (key=?)
 ///  / SEARCH messages USING COVERING INDEX messages_by_thread_date (thread_id=?)
-///  / USE SORTER FOR ORDER BY
 /// ```
 ///
 /// The restriction is on `threads`, so `threads` drives the loop and
-/// `messages` is the inner side; rows arrive grouped by thread rather than in
-/// `date` order, so the ordering has to be rebuilt. The second query below is
-/// the same join restricted on `messages` instead — `messages` drives, the
-/// index walk is already the output order, and the sorter is gone. Same join,
-/// same rendering: the sorter follows the loop order, not the join.
+/// `messages` is the inner side. `threads_by_key` is unique, so the outer
+/// loop yields at most one thread and the inner index walk is already in
+/// `date` order; Turso used to rebuild that order with a sorter anyway and no
+/// longer does. The second query below is the same join restricted on
+/// `messages` instead — `messages` drives and the index walk is the output
+/// order. Same join, same rendering, no sorter either way.
 #[tokio::test(flavor = "current_thread")]
 async fn inner_join_keeps_the_index_on_both_sides() -> Result<()> {
     let mut conn = setup().await?;
@@ -350,13 +349,7 @@ async fn inner_join_keeps_the_index_on_both_sides() -> Result<()> {
     assert_uses_index(&mut conn, &by_thread_key, "threads_by_key").await?;
     assert_uses_index(&mut conn, &by_thread_key, "messages_by_thread_date").await?;
 
-    let detail = plan(&mut conn, &by_thread_key).await?;
-    assert!(
-        detail.contains(SORTER),
-        "restricting on the far table makes it the driver, so the ordering on \
-         the near table has to be rebuilt; if this stops being true the \
-         comment above needs rewriting: {detail}"
-    );
+    assert_no_sorter(&mut conn, &by_thread_key).await?;
 
     // The same join, restricted on the ordered table instead.
     let by_message_thread_id = messages::table
